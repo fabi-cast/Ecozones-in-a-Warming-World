@@ -22,7 +22,7 @@ A global analysis about the status of Wildlife and their relationship with the m
 
 ## Data Sources
 
-**1. Endangered Species:** We retrieve data by using API service provided by the International Union for Conservation Nature and Natural Resources [IUCN](https://www.iucnredlist.org/).
+**1. Endangered Species:** We retrieve data from the API service provided by the International Union for Conservation Nature and Natural Resources [IUCN](https://www.iucnredlist.org/).
 
 **2. Temperature data:**  For the temperature anomalies, we extract data from [Goddard Institute for Space Studies](https://data.giss.nasa.gov) (GISS), a dependency from NASA. 
 
