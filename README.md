@@ -18,16 +18,39 @@ A global analysis about the status of Wildlife and their relationship with the m
 
 ## Data Sources 
 
-**1. Endangered Species:** We retrieve data from the API service provided by the International Union for Conservation Nature and Natural Resources [IUCN](https://www.iucnredlist.org/).
+**1. International Union for Conservation of Nature [IUCN RED List API -v3](https://apiv3.iucnredlist.org/api/v3/docs)**: Threatened species around the World data. In order to access the data it is necessary to ask for a token.
 
-**2. Temperature data:**  For the temperature anomalies, we extract data from [Goddard Institute for Space Studies](https://data.giss.nasa.gov) (GISS), a dependency from NASA. 
+**2. [World Bank: Climate change knowdledge portal](https://climateknowledgeportal.worldbank.org)**: Climate change related variables, precipitation and average temperatures monthly and yearly for each country.
 
-**3. Precipitation data:**  
+**3. [National Centers for Environmental Information](https://www.ncdc.noaa.gov/cag/)**: Temperature Anomalies dataset.
 
-**4. **
+**4. [EONET API v.2.1](https://eonet.sci.gsfc.nasa.gov/docs/v2.1)**: Natural events ocurrences around the World.
+
+**5. [NASA Climate](https://climate.nasa.gov/vital-signs/sea-level/)**: Sea level rising measurements.
+
+## Organization
+
+This repository contains: 
+* data-cleaning.ipnyb: this notebook shows the extraction and cleaning process of the datasets used in this project. Also, the curated data is exported as .csv file.
+* nature-warming-world.ipnyb: this notebook contains the exploratory data analysis and data visualization tasks.
+* data: This folder contains the curated data using through the analysis. By policies of the IUCN API, it is not possible to distribute the original data set.
+* charts: Contains static images of the data viz created. Most of them are originaly interactive, produced using Bokeh, Holoviews, HvPlot and Plotly. Unfortunately, they cannot be rendered in GitHub.
 
 ## Workflow
 
+**1. Asking the right questions:** 
+* Is climate change an uniform phenomenon around the planet? 
+* What are the species more threatened by global warming in each biorealm? 
+* How do CO2 emissions, temperature and precipitation vary over time in each biorealm?
+* Are these variables correlated with the loss of species in each biorealm?
+
+**2. Data wrangling:** We start by gathering data from the respective APIs and from the other sources. The cleaning process is a little bit extensive, so we have dedicated a separated notebook showing this process. As final step of this stage, we export curated data to the output folder.
+
+**3. Exploratory Data Analysis:** First, we wanted to investigate whether is possible to cluster using K-means regions of the planet using temperature and precipitation data. Although this attempt did not give us a meaningful clustering for the problem we are adressing, we decided to classify regions by Biorealms to conduct our analysis. 
+
+**4. Data Visualization.** 
+
+**5. Presentation.** 
 
 ## Tech Stack
 
@@ -43,7 +66,7 @@ A global analysis about the status of Wildlife and their relationship with the m
 
 ## Environment Dependencies:
 
-- _ipyw_jlab_nb_ext_conf=0.1.0=py37_0
+  - _ipyw_jlab_nb_ext_conf=0.1.0=py37_0
   - alabaster=0.7.12=py37_0
   - anaconda=2019.10=py37_0
   - anaconda-client=1.7.2=py37_0
@@ -165,48 +188,6 @@ A global analysis about the status of Wildlife and their relationship with the m
   - json-c=0.13.1=h3efe00b_0
   - json5=0.8.5=py_0
   - jsonschema=3.0.2=py37_0
-  - jupyter=1.0.0=py37_7
-  - jupyter_client=5.3.3=py37_1
-  - jupyter_console=6.0.0=py37_0
-  - jupyter_core=4.5.0=py_0
-  - jupyterlab=1.1.4=pyhf63ae98_0
-  - jupyterlab_server=1.0.6=py_0
-  - kealib=1.4.7=hf5ed860_6
-  - keyring=18.0.0=py37_0
-  - kiwisolver=1.1.0=py37h0a44026_0
-  - krb5=1.16.1=hddcf347_7
-  - lazy-object-proxy=1.4.2=py37h1de35cc_0
-  - libarchive=3.3.3=h786848e_5
-  - libboost=1.67.0=hebc422b_4
-  - libcurl=7.65.3=h051b688_0
-  - libcxx=4.0.1=hcfea43d_1
-  - libcxxabi=4.0.1=hcfea43d_1
-  - libdap4=3.19.1=h3d3e54a_0
-  - libedit=3.1.20181209=hb402a30_0
-  - libffi=3.2.1=h475c297_4
-  - libgdal=2.3.3=h0950a36_0
-  - libgfortran=3.0.1=h93005f0_2
-  - libiconv=1.15=hdd342a3_7
-  - libkml=1.3.0=hbe12b63_4
-  - liblief=0.9.0=h2a1bed3_2
-  - libnetcdf=4.6.1=hd5207e6_2
-  - libpng=1.6.37=ha441bb4_0
-  - libpq=11.2=h051b688_0
-  - libsodium=1.0.16=h3efe00b_0
-  - libspatialindex=1.9.3=h0a44026_0
-  - libspatialite=4.3.0a=h644ec7d_19
-  - libssh2=1.8.2=ha12b0ac_0
-  - libtiff=4.0.10=hcb84e12_2
-  - libxml2=2.9.9=hf6e021a_1
-  - libxslt=1.1.33=h33a18ac_0
-  - llvm-openmp=4.0.1=hcfea43d_1
-  - llvmlite=0.29.0=py37h98b8051_0
-  - locket=0.2.0=py37_1
-  - lxml=4.4.1=py37hef8c89e_0
-  - lz4-c=1.8.1.2=h1de35cc_0
-  - lzo=2.10=h362108e_2
-  - markdown=3.1.1=py37_0
-  - markupsafe=1.1.1=py37h1de35cc_0
   - matplotlib=3.1.1=py37h54f8f79_0
   - matplotlib-base=3.1.1=py37h3a684a6_1
   - mccabe=0.6.1=py37_1
@@ -392,8 +373,6 @@ A global analysis about the status of Wildlife and their relationship with the m
     - lightning-python==1.2.1
     - ratelim==0.1.6
     - squarify==0.4.3
-
-## Organization
 
 
 ## Links
