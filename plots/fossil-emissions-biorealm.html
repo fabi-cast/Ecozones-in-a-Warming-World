@@ -1,0 +1,873 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+
+// Define MPL specific subclasses
+function MPLSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function MPLScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+MPLSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+MPLScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var MPLMethods = {
+  init_slider : function(init_val){
+    if(this.load_json) {
+      this.from_json()
+    } else {
+      this.update_cache();
+    }
+    if (this.dynamic | !this.cached | (this.current_vals === undefined)) {
+      this.update(0)
+    } else {
+      this.set_frame(this.current_vals[0], 0)
+    }
+  },
+  process_msg : function(msg) {
+    var data = msg.content.data;
+    this.frames[this.current] = data;
+    this.update_cache(true);
+    this.update(this.current);
+  }
+}
+// Extend MPL widgets with backend specific methods
+extend(MPLSelectionWidget.prototype, MPLMethods);
+extend(MPLScrubberWidget.prototype, MPLMethods);
+
+window.HoloViews.MPLSelectionWidget = MPLSelectionWidget
+window.HoloViews.MPLScrubberWidget = MPLScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+
+div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="df06d453-c07d-4d23-974a-dc7a3286e7bc" data-root-id="72267"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"70825660-6da0-412d-bb3b-c6c9bfc88ad8":{"roots":{"references":[{"attributes":{"align":null,"below":[{"id":"72276","type":"CategoricalAxis"}],"center":[{"id":"72279","type":"Grid"},{"id":"72284","type":"Grid"},{"id":"72315","type":"Legend"}],"left":[{"id":"72280","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_width":900,"renderers":[{"id":"72307","type":"GlyphRenderer"},{"id":"72323","type":"GlyphRenderer"},{"id":"72340","type":"GlyphRenderer"},{"id":"72359","type":"GlyphRenderer"},{"id":"72380","type":"GlyphRenderer"},{"id":"72403","type":"GlyphRenderer"},{"id":"72428","type":"GlyphRenderer"}],"right":[{"id":"72315","type":"Legend"}],"sizing_mode":"fixed","title":{"id":"72268","type":"Title"},"toolbar":{"id":"72290","type":"Toolbar"},"x_range":{"id":"72258","type":"FactorRange"},"x_scale":{"id":"72272","type":"CategoricalScale"},"y_range":{"id":"72259","type":"Range1d"},"y_scale":{"id":"72274","type":"LinearScale"}},"id":"72267","subtype":"Figure","type":"Plot"},{"attributes":{"label":{"value":"Nearctic"},"renderers":[{"id":"72359","type":"GlyphRenderer"}]},"id":"72373","type":"LegendItem"},{"attributes":{"grid_line_color":null,"ticker":{"id":"72277","type":"CategoricalTicker"}},"id":"72279","type":"Grid"},{"attributes":{"line_alpha":0.6,"line_color":"#49ff90","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72357","type":"Line"},{"attributes":{"line_alpha":0.2,"line_color":"#75728e","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72427","type":"Line"},{"attributes":{"line_alpha":0.6,"line_color":"#005760","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72378","type":"Line"},{"attributes":{},"id":"72285","type":"SaveTool"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"72260","type":"HoverTool"},{"id":"72285","type":"SaveTool"},{"id":"72286","type":"PanTool"},{"id":"72287","type":"WheelZoomTool"},{"id":"72288","type":"BoxZoomTool"},{"id":"72289","type":"ResetTool"}]},"id":"72290","type":"Toolbar"},{"attributes":{},"id":"72277","type":"CategoricalTicker"},{"attributes":{},"id":"72466","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"72422","type":"ColumnDataSource"},"glyph":{"id":"72425","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72427","type":"Line"},"nonselection_glyph":{"id":"72426","type":"Line"},"selection_glyph":null,"view":{"id":"72429","type":"CDSView"}},"id":"72428","type":"GlyphRenderer"},{"attributes":{},"id":"72281","type":"BasicTicker"},{"attributes":{"line_alpha":0.6,"line_color":"#aca3ff","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72400","type":"Line"},{"attributes":{"line_alpha":0.6,"line_color":"#aca3ff","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72401","type":"Line"},{"attributes":{"axis_label":"Year","bounds":"auto","formatter":{"id":"72298","type":"CategoricalTickFormatter"},"major_label_orientation":0.7853981633974483,"ticker":{"id":"72277","type":"CategoricalTicker"}},"id":"72276","type":"CategoricalAxis"},{"attributes":{"data_source":{"id":"72397","type":"ColumnDataSource"},"glyph":{"id":"72400","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72402","type":"Line"},"nonselection_glyph":{"id":"72401","type":"Line"},"selection_glyph":null,"view":{"id":"72404","type":"CDSView"}},"id":"72403","type":"GlyphRenderer"},{"attributes":{},"id":"72298","type":"CategoricalTickFormatter"},{"attributes":{},"id":"72286","type":"PanTool"},{"attributes":{"dimension":1,"grid_line_color":null,"ticker":{"id":"72281","type":"BasicTicker"}},"id":"72284","type":"Grid"},{"attributes":{"source":{"id":"72353","type":"ColumnDataSource"}},"id":"72360","type":"CDSView"},{"attributes":{"source":{"id":"72422","type":"ColumnDataSource"}},"id":"72429","type":"CDSView"},{"attributes":{},"id":"72272","type":"CategoricalScale"},{"attributes":{},"id":"72370","type":"UnionRenderers"},{"attributes":{"axis_label":"CO2 emissions (Mt)","bounds":"auto","formatter":{"id":"72300","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"72281","type":"BasicTicker"}},"id":"72280","type":"LinearAxis"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"KRbJJD3Gs0DbPrVQyUCzQKG912A1S7RAj9iTJeUZtUC8rYA70Hq0QMAQM+hNmbNArdF2PZ7MtECdjyzNQn+1QIFAN9n2fLVAtsx+KXKztUDjqLeiYtS0QL9wyZo4e7RA2Tf6T4dxs0B33pQalVizQL7Tt+CkPrRAOGxBSXtYtEBlhQI9wyW0QM7+veVC0LRAGjHNWr/PtUATKB7rvRi2QC+4McE1prVAM58SINZ3tUAh24ey3dW1QMbvMqofTrZAu7ywalqrtkC+mKVVru22QGr8oV1Xj7dASX7aJt9OuECJpUAfcGS4QJni7Wp5g7hAat536FVluUA00eDpXyC5QCgymuRS2LhABaituZQ2uUCC1QYf54W5QJH8gsrImblAkKy2efsquUDZzGySCJq5QJs30V1WxbhAJ8F1pgUDt0BOQHHS5wS4QHRV71xVjrdAGge1JG/btkBIFFxgmCq3QCJ16OBwdrdAbdi31kfLtkBDKlipj3S2QNpKQRW3XbZA","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"KRbJJD3Gs0DbPrVQyUCzQKG912A1S7RAj9iTJeUZtUC8rYA70Hq0QMAQM+hNmbNArdF2PZ7MtECdjyzNQn+1QIFAN9n2fLVAtsx+KXKztUDjqLeiYtS0QL9wyZo4e7RA2Tf6T4dxs0B33pQalVizQL7Tt+CkPrRAOGxBSXtYtEBlhQI9wyW0QM7+veVC0LRAGjHNWr/PtUATKB7rvRi2QC+4McE1prVAM58SINZ3tUAh24ey3dW1QMbvMqofTrZAu7ywalqrtkC+mKVVru22QGr8oV1Xj7dASX7aJt9OuECJpUAfcGS4QJni7Wp5g7hAat536FVluUA00eDpXyC5QCgymuRS2LhABaituZQ2uUCC1QYf54W5QJH8gsrImblAkKy2efsquUDZzGySCJq5QJs30V1WxbhAJ8F1pgUDt0BOQHHS5wS4QHRV71xVjrdAGge1JG/btkBIFFxgmCq3QCJ16OBwdrdAbdi31kfLtkBDKlipj3S2QNpKQRW3XbZA","dtype":"float64","shape":[48]},"Variable":["Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic","Nearctic"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72354","type":"Selection"},"selection_policy":{"id":"72393","type":"UnionRenderers"}},"id":"72353","type":"ColumnDataSource"},{"attributes":{},"id":"72398","type":"Selection"},{"attributes":{"line_alpha":0.2,"line_color":"#49ff90","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72358","type":"Line"},{"attributes":{"source":{"id":"72397","type":"ColumnDataSource"}},"id":"72404","type":"CDSView"},{"attributes":{},"id":"72274","type":"LinearScale"},{"attributes":{"line_alpha":0.2,"line_color":"#aca3ff","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72402","type":"Line"},{"attributes":{"data_source":{"id":"72353","type":"ColumnDataSource"},"glyph":{"id":"72356","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72358","type":"Line"},"nonselection_glyph":{"id":"72357","type":"Line"},"selection_glyph":null,"view":{"id":"72360","type":"CDSView"}},"id":"72359","type":"GlyphRenderer"},{"attributes":{"text":"Fossil CO2 emissions by Biorealm","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"72268","type":"Title"},{"attributes":{},"id":"72287","type":"WheelZoomTool"},{"attributes":{},"id":"72289","type":"ResetTool"},{"attributes":{"line_alpha":0.6,"line_color":"#49ff90","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72356","type":"Line"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"ENy3CLsvCEDBVeeozUIIQEuaisa2rAhAjDhlcS21CUBGPBmgFOQLQGfEsaDDCQpA/VexCuiPCUCREghqIisKQJpNQpCcHApA889yMg9qC0Cb3tDbKb0LQERo5Z9Xnw5AWQYHiod5DkC6MCHSrj0PQA2Z4NAqLhBAH/8rSaO2DUCzmFHVSNkPQJm9UjCIURBATmmKatQPEEAlki4We6MQQJSwF0vPHRFA3gdUgjReEEBe9S2fXwoPQEHULLlSuQ9AlDkd1smNEUCpNt9YtZkOQOrlMliqYg5ApNSjhv2BEEBXlcG9INMPQLUqXZAhqRBAK28ju9RkEEAe4+ZpOz0SQLHjp391tA1A912Edn2cEUC/OUN8XtISQK44eerBGRRA3ndOYrCIE0D9FvzC200RQByaXNNWhRFAvM3mNLXhEUBmw/M5y2wSQNs276yb+hVAibhnhNgMIEDhMOBLMgoVQCCwuGEXkAtAylMmmt8nCkBZsLnUFPYMQPPL9BQ/xg5A","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"ENy3CLsvCEDBVeeozUIIQEuaisa2rAhAjDhlcS21CUBGPBmgFOQLQGfEsaDDCQpA/VexCuiPCUCREghqIisKQJpNQpCcHApA889yMg9qC0Cb3tDbKb0LQERo5Z9Xnw5AWQYHiod5DkC6MCHSrj0PQA2Z4NAqLhBAH/8rSaO2DUCzmFHVSNkPQJm9UjCIURBATmmKatQPEEAlki4We6MQQJSwF0vPHRFA3gdUgjReEEBe9S2fXwoPQEHULLlSuQ9AlDkd1smNEUCpNt9YtZkOQOrlMliqYg5ApNSjhv2BEEBXlcG9INMPQLUqXZAhqRBAK28ju9RkEEAe4+ZpOz0SQLHjp391tA1A912Edn2cEUC/OUN8XtISQK44eerBGRRA3ndOYrCIE0D9FvzC200RQByaXNNWhRFAvM3mNLXhEUBmw/M5y2wSQNs276yb+hVAibhnhNgMIEDhMOBLMgoVQCCwuGEXkAtAylMmmt8nCkBZsLnUFPYMQPPL9BQ/xg5A","dtype":"float64","shape":[48]},"Variable":["Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72398","type":"Selection"},"selection_policy":{"id":"72445","type":"UnionRenderers"}},"id":"72397","type":"ColumnDataSource"},{"attributes":{"source":{"id":"72374","type":"ColumnDataSource"}},"id":"72381","type":"CDSView"},{"attributes":{"overlay":{"id":"72314","type":"BoxAnnotation"}},"id":"72288","type":"BoxZoomTool"},{"attributes":{},"id":"72330","type":"UnionRenderers"},{"attributes":{},"id":"72318","type":"Selection"},{"attributes":{"line_alpha":0.2,"line_color":"#08954d","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72322","type":"Line"},{"attributes":{},"id":"72418","type":"UnionRenderers"},{"attributes":{},"id":"72445","type":"UnionRenderers"},{"attributes":{"label":{"value":"Oceanian"},"renderers":[{"id":"72403","type":"GlyphRenderer"}]},"id":"72421","type":"LegendItem"},{"attributes":{"data_source":{"id":"72334","type":"ColumnDataSource"},"glyph":{"id":"72337","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72339","type":"Line"},"nonselection_glyph":{"id":"72338","type":"Line"},"selection_glyph":null,"view":{"id":"72341","type":"CDSView"}},"id":"72340","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.6,"line_color":"#08954d","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72321","type":"Line"},{"attributes":{"callback":null,"end":23747.513377530286,"reset_end":23747.513377530286,"reset_start":-2155.5667005486807,"start":-2155.5667005486807,"tags":[[["CO2 emissions (Mt)","CO2 emissions (Mt)",null]]]},"id":"72259","type":"Range1d"},{"attributes":{"source":{"id":"72317","type":"ColumnDataSource"}},"id":"72324","type":"CDSView"},{"attributes":{"line_alpha":0.6,"line_color":"#00cae4","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72337","type":"Line"},{"attributes":{"label":{"value":"Australasian"},"renderers":[{"id":"72323","type":"GlyphRenderer"}]},"id":"72333","type":"LegendItem"},{"attributes":{},"id":"72335","type":"Selection"},{"attributes":{"label":{"value":"Palearctic"},"renderers":[{"id":"72428","type":"GlyphRenderer"}]},"id":"72448","type":"LegendItem"},{"attributes":{"line_alpha":0.2,"line_color":"#00cae4","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72339","type":"Line"},{"attributes":{"line_alpha":0.6,"line_color":"#75728e","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72426","type":"Line"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"EhDX1g2YgUD5odYcnnaBQCgb8vKyXoJAdHbwZHfog0BksFKpHomEQBVNLqH0koRAUT9r3+L+hUD6WbHrXtyGQFR053yubIhAzM/Q6VTMiUAjww5A6smKQPu7+lVFyIpAmWjlXQ0qi0A6rmU6emeKQLOChak13IpA0H7H4LUii0DCaN6CJkaMQPPkTnSBSI1ACYi6MQ/ejUCI7dL1E7aOQGU8/XFfc45AIwY2LAcij0CL89Ut3cCPQPZHmGEyZZBA1Ovis6YGkUDnnHSrFoCRQEaJE+C4mpJAwNRd/S3Ek0BqV+bLOIKUQOzRAFDMVJRAeIHxmNYxlUA1dkJeEyqVQKY6Po2rJJVAYfa/YFGwlUCGuI8nzrmWQJWqaIDfd5dARi2vDsUOmEAk0KQCrd2YQAT34TN495lA8dNtF8NdmUA63eylYgCbQML4GEx3nptARN5EBrA2nUCFAj10pJadQPcNsyznDp5AKFFfMWGanUDFn1sC5midQCg9m+qq1ZxA","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"EhDX1g2YgUD5odYcnnaBQCgb8vKyXoJAdHbwZHfog0BksFKpHomEQBVNLqH0koRAUT9r3+L+hUD6WbHrXtyGQFR053yubIhAzM/Q6VTMiUAjww5A6smKQPu7+lVFyIpAmWjlXQ0qi0A6rmU6emeKQLOChak13IpA0H7H4LUii0DCaN6CJkaMQPPkTnSBSI1ACYi6MQ/ejUCI7dL1E7aOQGU8/XFfc45AIwY2LAcij0CL89Ut3cCPQPZHmGEyZZBA1Ovis6YGkUDnnHSrFoCRQEaJE+C4mpJAwNRd/S3Ek0BqV+bLOIKUQOzRAFDMVJRAeIHxmNYxlUA1dkJeEyqVQKY6Po2rJJVAYfa/YFGwlUCGuI8nzrmWQJWqaIDfd5dARi2vDsUOmEAk0KQCrd2YQAT34TN495lA8dNtF8NdmUA63eylYgCbQML4GEx3nptARN5EBrA2nUCFAj10pJadQPcNsyznDp5AKFFfMWGanUDFn1sC5midQCg9m+qq1ZxA","dtype":"float64","shape":[48]},"Variable":["Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72375","type":"Selection"},"selection_policy":{"id":"72418","type":"UnionRenderers"}},"id":"72374","type":"ColumnDataSource"},{"attributes":{"line_alpha":0.6,"line_color":"#00cae4","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72338","type":"Line"},{"attributes":{"source":{"id":"72334","type":"ColumnDataSource"}},"id":"72341","type":"CDSView"},{"attributes":{"label":{"value":"Indomalayan"},"renderers":[{"id":"72340","type":"GlyphRenderer"}]},"id":"72352","type":"LegendItem"},{"attributes":{},"id":"72354","type":"Selection"},{"attributes":{"callback":null,"factors":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"],"tags":[[["Year","Year",null]]]},"id":"72258","type":"FactorRange"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"ajb3XS47ZkCmuKB6EF9mQDM2mVUdYmdAEHERbjrGaEDPOYEqiyNqQMSWiZ+5ympA6AggORFWa0BHCM6acSdtQFAw1oSDtWxAhLuB81pHbUDfwF2f3ZduQOfBH3ZNsG5A7XlnvbOUb0CFZoF0Xe9tQOnjIgKjym5AZrtKkPxecECFGZLLylFwQPi6MzQ1IHFA1X8nRMy4cUAw/Vuin6dyQPiCGxS5+XJAeDj+HpEfc0DnM05yDHdzQMBlq5omtXNA73sILT4ddEBS9/P4gc10QIA0yfwBkXVAF1yjydxFdkC5U3x0LZh3QMezbY9s/HdAE21a7+d3eEBJo0wiQwZ5QCEImIDxk3lAcORWkUX4eUA5o55oQNF6QFSzSS2wNntApkOEj16je0Cmg3clwTh8QH9gkvuKgHxA1vnr4bydfEAcE/LZu3R8QMCYxXUgYXxAWcLSp36TfEAHyfyQmE18QGExPeysmntAuMrVfxn9e0BECnDBh/t7QJe2+E/EGHxA","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"ajb3XS47ZkCmuKB6EF9mQDM2mVUdYmdAEHERbjrGaEDPOYEqiyNqQMSWiZ+5ympA6AggORFWa0BHCM6acSdtQFAw1oSDtWxAhLuB81pHbUDfwF2f3ZduQOfBH3ZNsG5A7XlnvbOUb0CFZoF0Xe9tQOnjIgKjym5AZrtKkPxecECFGZLLylFwQPi6MzQ1IHFA1X8nRMy4cUAw/Vuin6dyQPiCGxS5+XJAeDj+HpEfc0DnM05yDHdzQMBlq5omtXNA73sILT4ddEBS9/P4gc10QIA0yfwBkXVAF1yjydxFdkC5U3x0LZh3QMezbY9s/HdAE21a7+d3eEBJo0wiQwZ5QCEImIDxk3lAcORWkUX4eUA5o55oQNF6QFSzSS2wNntApkOEj16je0Cmg3clwTh8QH9gkvuKgHxA1vnr4bydfEAcE/LZu3R8QMCYxXUgYXxAWcLSp36TfEAHyfyQmE18QGExPeysmntAuMrVfxn9e0BECnDBh/t7QJe2+E/EGHxA","dtype":"float64","shape":[48]},"Variable":["Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian","Australasian"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72318","type":"Selection"},"selection_policy":{"id":"72349","type":"UnionRenderers"}},"id":"72317","type":"ColumnDataSource"},{"attributes":{"callback":null,"renderers":[{"id":"72307","type":"GlyphRenderer"},{"id":"72323","type":"GlyphRenderer"},{"id":"72340","type":"GlyphRenderer"},{"id":"72359","type":"GlyphRenderer"},{"id":"72380","type":"GlyphRenderer"},{"id":"72403","type":"GlyphRenderer"},{"id":"72428","type":"GlyphRenderer"}],"tags":["hv_created"],"tooltips":[["Variable","@{Variable}"],["Year","@{Year}"],["CO2 emissions (Mt)","@{CO2_emissions_left_parenthesis_Mt_right_parenthesis}"]]},"id":"72260","type":"HoverTool"},{"attributes":{"data_source":{"id":"72317","type":"ColumnDataSource"},"glyph":{"id":"72320","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72322","type":"Line"},"nonselection_glyph":{"id":"72321","type":"Line"},"selection_glyph":null,"view":{"id":"72324","type":"CDSView"}},"id":"72323","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.6,"line_color":"#75728e","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72425","type":"Line"},{"attributes":{"label":{"value":"Neotropical"},"renderers":[{"id":"72380","type":"GlyphRenderer"}]},"id":"72396","type":"LegendItem"},{"attributes":{"line_alpha":0.6,"line_color":"#08954d","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72320","type":"Line"},{"attributes":{"line_alpha":0.6,"line_color":"#005760","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72377","type":"Line"},{"attributes":{"label":{"value":"Afrotropical"},"renderers":[{"id":"72307","type":"GlyphRenderer"}]},"id":"72316","type":"LegendItem"},{"attributes":{"click_policy":"mute","items":[{"id":"72316","type":"LegendItem"},{"id":"72333","type":"LegendItem"},{"id":"72352","type":"LegendItem"},{"id":"72373","type":"LegendItem"},{"id":"72396","type":"LegendItem"},{"id":"72421","type":"LegendItem"},{"id":"72448","type":"LegendItem"}],"location":[0,0]},"id":"72315","type":"Legend"},{"attributes":{},"id":"72375","type":"Selection"},{"attributes":{"source":{"id":"72301","type":"ColumnDataSource"}},"id":"72308","type":"CDSView"},{"attributes":{"data_source":{"id":"72301","type":"ColumnDataSource"},"glyph":{"id":"72304","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72306","type":"Line"},"nonselection_glyph":{"id":"72305","type":"Line"},"selection_glyph":null,"view":{"id":"72308","type":"CDSView"}},"id":"72307","type":"GlyphRenderer"},{"attributes":{"line_alpha":0.2,"line_color":"#005760","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72379","type":"Line"},{"attributes":{},"id":"72300","type":"BasicTickFormatter"},{"attributes":{"line_alpha":0.2,"line_color":"#0c69ff","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72306","type":"Line"},{"attributes":{},"id":"72423","type":"Selection"},{"attributes":{"data_source":{"id":"72374","type":"ColumnDataSource"},"glyph":{"id":"72377","type":"Line"},"hover_glyph":null,"muted_glyph":{"id":"72379","type":"Line"},"nonselection_glyph":{"id":"72378","type":"Line"},"selection_glyph":null,"view":{"id":"72381","type":"CDSView"}},"id":"72380","type":"GlyphRenderer"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"72314","type":"BoxAnnotation"},{"attributes":{"line_alpha":0.6,"line_color":"#0c69ff","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72305","type":"Line"},{"attributes":{"line_alpha":0.6,"line_color":"#0c69ff","line_width":3,"x":{"field":"Year"},"y":{"field":"CO2 emissions (Mt)"}},"id":"72304","type":"Line"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"Zs63nL8PeEBqaIyhYzt4QNYZS9gntnlAzgtvT7qMekCuiLJgh9B7QHla7cY3eX1AQO64Z+EKf0CPKoXn/JGAQDX6dQDSmIBAPKcbGDLOgUDq1Rpn8U6CQBa4Ie/Xb4NAheZZmrJyhEDQ6BEaHJqFQOpBi23J24ZAit2qIq4aiEAOFWk2d4KJQIplRdjDh4tAnaeC3r1wjUBCe88q8KiPQCu7T/saV5FAbgC3oACfkkDuAeJALXeTQDGhOVur5pRABS4B1Hw7lkAzsCOR8lGYQBaVAPgW35lAV63O5iVmm0CRY+U7qF+bQLKFp66LOJ1APYWa6FYonkD0h9zQxRefQMOlXacoMKBAYcDvd33doEBLzYrfhhqiQJvWYLgs1KJAepmRE0zLo0BeBflcgEKlQAHNdvXlI6ZA8vkVrZmSp0BwqPDDXtKoQNwtPPxrvalAJ9SaQRc+q0AXwa+0KvGrQE8bSdLDLK5AVrtQf445r0ApQvPD/SWwQONJpz6Mt7BA","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"Zs63nL8PeEBqaIyhYzt4QNYZS9gntnlAzgtvT7qMekCuiLJgh9B7QHla7cY3eX1AQO64Z+EKf0CPKoXn/JGAQDX6dQDSmIBAPKcbGDLOgUDq1Rpn8U6CQBa4Ie/Xb4NAheZZmrJyhEDQ6BEaHJqFQOpBi23J24ZAit2qIq4aiEAOFWk2d4KJQIplRdjDh4tAnaeC3r1wjUBCe88q8KiPQCu7T/saV5FAbgC3oACfkkDuAeJALXeTQDGhOVur5pRABS4B1Hw7lkAzsCOR8lGYQBaVAPgW35lAV63O5iVmm0CRY+U7qF+bQLKFp66LOJ1APYWa6FYonkD0h9zQxRefQMOlXacoMKBAYcDvd33doEBLzYrfhhqiQJvWYLgs1KJAepmRE0zLo0BeBflcgEKlQAHNdvXlI6ZA8vkVrZmSp0BwqPDDXtKoQNwtPPxrvalAJ9SaQRc+q0AXwa+0KvGrQE8bSdLDLK5AVrtQf445r0ApQvPD/SWwQONJpz6Mt7BA","dtype":"float64","shape":[48]},"Variable":["Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72335","type":"Selection"},"selection_policy":{"id":"72370","type":"UnionRenderers"}},"id":"72334","type":"ColumnDataSource"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"RgVwUv0DwUCTdZk6cAvBQFYPtkZIzMFAAzcMb9b0wkClfPWKyRHDQLsFhSDVYsNAc9I7YrtxxEAf7Jhju/vEQDjPt3LqO8ZAs+WjyF3jxkBtwmdSpq/GQAb1Wbj7IsZAlaiydS8lxkC9E1RxenjGQBj6BzgvFcdAKfVqgvNRx0DexQtrUtfHQG6TJclwgshAuS574I0zyUCYyF8SoYjJQBSXexJIEMpAmo8UPmYaykAk2IZpYITJQDrPvzqKNMlAPOF9C6coyUDRm81sotnJQIcWk/6Z7clAluKAIMm8yUDlLkJeJKfJQF+W6URfq8lAlkH9G7qOykCt6KBdLBvLQBJtaj9d08tAekwsPN+uzUAjzzaeC1TPQC4ZTndSbtBAtKMwb2NI0UAYavVPhwjSQHJZ4ZQYFdJAXNJICHUN0kBKPZNn9DHTQHCkLVvAKtRAlZd3Sbt21EDQ6HEspcnUQIV07hrqxdRAronPhtK71EDKfXe//MrUQDnHghg7FdVA","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"RgVwUv0DwUCTdZk6cAvBQFYPtkZIzMFAAzcMb9b0wkClfPWKyRHDQLsFhSDVYsNAc9I7YrtxxEAf7Jhju/vEQDjPt3LqO8ZAs+WjyF3jxkBtwmdSpq/GQAb1Wbj7IsZAlaiydS8lxkC9E1RxenjGQBj6BzgvFcdAKfVqgvNRx0DexQtrUtfHQG6TJclwgshAuS574I0zyUCYyF8SoYjJQBSXexJIEMpAmo8UPmYaykAk2IZpYITJQDrPvzqKNMlAPOF9C6coyUDRm81sotnJQIcWk/6Z7clAluKAIMm8yUDlLkJeJKfJQF+W6URfq8lAlkH9G7qOykCt6KBdLBvLQBJtaj9d08tAekwsPN+uzUAjzzaeC1TPQC4ZTndSbtBAtKMwb2NI0UAYavVPhwjSQHJZ4ZQYFdJAXNJICHUN0kBKPZNn9DHTQHCkLVvAKtRAlZd3Sbt21EDQ6HEspcnUQIV07hrqxdRAronPhtK71EDKfXe//MrUQDnHghg7FdVA","dtype":"float64","shape":[48]},"Variable":["Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72423","type":"Selection"},"selection_policy":{"id":"72466","type":"UnionRenderers"}},"id":"72422","type":"ColumnDataSource"},{"attributes":{},"id":"72349","type":"UnionRenderers"},{"attributes":{},"id":"72393","type":"UnionRenderers"},{"attributes":{"callback":null,"data":{"CO2 emissions (Mt)":{"__ndarray__":"2VOZg8eWd0CkGoRv7ZF5QKTDZQJmNXxA+Z6fDq8tgECn6VRtzceAQMZFlegnQYBATTdTmIASgkBv/LRKXSmCQKxs2fgIPYJAGat1tdykg0BkTr/WFwqFQAXKO8FFgIRAeehhx0vKhECfJHyulhyFQJV9C3ZL0oRAu1dsVfluhUD1dUQ1+ZeFQFjwgeo4uYZAFpQcE2Oxh0B+K6hT8mqIQLJVTq/j44dAnGRSpbaviEDxGbkJr/OIQDClNK6wl4lAnYzopjYsi0B+m4uXDlqMQGtR85qnCI5AZw6JttYOj0BcgmmWHNmPQPlddwPWB5BAWbqXv3aXkEDh7OLu2WORQL88+XdZ4JFAANOdPJfekkCT/9R2mtKTQJDfOEECrZRAY2FNgxpalUCEf4cdLjyWQOhurfB0+5dAbWUgDzAQmEATHOwDuYWZQICaQdCtFJpABdwo74Apm0D0L2wGOH6cQCrkxylYb51Au58N4FD/nUCKQXTJAUmeQHNx5T7brp5A","dtype":"float64","shape":[48]},"CO2_emissions_left_parenthesis_Mt_right_parenthesis":{"__ndarray__":"2VOZg8eWd0CkGoRv7ZF5QKTDZQJmNXxA+Z6fDq8tgECn6VRtzceAQMZFlegnQYBATTdTmIASgkBv/LRKXSmCQKxs2fgIPYJAGat1tdykg0BkTr/WFwqFQAXKO8FFgIRAeehhx0vKhECfJHyulhyFQJV9C3ZL0oRAu1dsVfluhUD1dUQ1+ZeFQFjwgeo4uYZAFpQcE2Oxh0B+K6hT8mqIQLJVTq/j44dAnGRSpbaviEDxGbkJr/OIQDClNK6wl4lAnYzopjYsi0B+m4uXDlqMQGtR85qnCI5AZw6JttYOj0BcgmmWHNmPQPlddwPWB5BAWbqXv3aXkEDh7OLu2WORQL88+XdZ4JFAANOdPJfekkCT/9R2mtKTQJDfOEECrZRAY2FNgxpalUCEf4cdLjyWQOhurfB0+5dAbWUgDzAQmEATHOwDuYWZQICaQdCtFJpABdwo74Apm0D0L2wGOH6cQCrkxylYb51Au58N4FD/nUCKQXTJAUmeQHNx5T7brp5A","dtype":"float64","shape":[48]},"Variable":["Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical"],"Year":["1970","1971","1972","1973","1974","1975","1976","1977","1978","1979","1980","1981","1982","1983","1984","1985","1986","1987","1988","1989","1990","1991","1992","1993","1994","1995","1996","1997","1998","1999","2000","2001","2002","2003","2004","2005","2006","2007","2008","2009","2010","2011","2012","2013","2014","2015","2016","2017"]},"selected":{"id":"72302","type":"Selection"},"selection_policy":{"id":"72330","type":"UnionRenderers"}},"id":"72301","type":"ColumnDataSource"},{"attributes":{},"id":"72302","type":"Selection"}],"root_ids":["72267"]},"title":"Bokeh Application","version":"1.3.4"}};
+  var render_items = [{"docid":"70825660-6da0-412d-bb3b-c6c9bfc88ad8","roots":{"72267":"df06d453-c07d-4d23-974a-dc7a3286e7bc"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        embed_document(root);
+        clearInterval(timer);
+      }
+      attempts++;
+      if (attempts > 100) {
+        console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        clearInterval(timer);
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>

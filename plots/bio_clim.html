@@ -1,0 +1,873 @@
+
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-widgets-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-tables-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://cdn.pydata.org/bokeh/release/bokeh-gl-1.3.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/jquery-2.1.4.min.js" type="text/javascript"></script>
+<script src="https://code.jquery.com/ui/1.10.4/jquery-ui.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.1.20/require.min.js" type="text/javascript"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/underscore.js/1.8.3/underscore-min.js" type="text/javascript"></script>
+<script type="text/javascript">function HoloViewsWidget() {
+}
+
+HoloViewsWidget.prototype.init_slider = function(init_val){
+  if(this.load_json) {
+    this.from_json()
+  } else {
+    this.update_cache();
+  }
+}
+
+HoloViewsWidget.prototype.populate_cache = function(idx){
+  this.cache[idx].innerHTML = this.frames[idx];
+  if (this.embed) {
+    delete this.frames[idx];
+  }
+}
+
+HoloViewsWidget.prototype.process_error = function(msg){
+}
+
+HoloViewsWidget.prototype.from_json = function() {
+  var data_url = this.json_path + this.id + '.json';
+  $.getJSON(data_url, $.proxy(function(json_data) {
+    this.frames = json_data;
+    this.update_cache();
+    this.update(0);
+  }, this));
+}
+
+HoloViewsWidget.prototype.dynamic_update = function(current){
+  if (current === undefined) {
+    return
+  }
+  this.current = current;
+  if (this.comm) {
+    var msg = {comm_id: this.id+'_client', content: current}
+    this.comm.send(msg);
+  }
+}
+
+HoloViewsWidget.prototype.update_cache = function(force){
+  var frame_len = Object.keys(this.frames).length;
+  for (var i=0; i<frame_len; i++) {
+    if(!this.load_json || this.dynamic)  {
+      var frame = Object.keys(this.frames)[i];
+    } else {
+      var frame = i;
+    }
+    if(!(frame in this.cache) || force) {
+      if ((frame in this.cache) && force) { this.cache[frame].remove() }
+      var div = document.createElement("div");
+      var parent = document.getElementById("_anim_img"+this.id);
+      div.style.display = "none";
+      parent.appendChild(div)
+      this.cache[frame] = div;
+      var cache_id = "_anim_img"+this.id+"_"+frame;
+      this.populate_cache(frame);
+    }
+  }
+}
+
+HoloViewsWidget.prototype.update = function(current){
+  if(current in this.cache) {
+    for (var index in this.cache) {
+      this.cache[index].style.display = "none";
+    }
+    this.cache[current].style.display = "";
+    this.wait = false;
+  }
+}
+
+HoloViewsWidget.prototype.init_comms = function() {
+  var that = this
+  HoloViews.comm_manager.register_target(this.plot_id, this.id, function (msg) { that.msg_handler(msg) })
+  if (!this.cached || this.dynamic) {
+    function ack_callback(msg) {
+      var msg = msg.metadata;
+      var comm_id = msg.comm_id;
+      var comm_status = HoloViews.comm_status[comm_id];
+      if (that.queue.length > 0) {
+        that.time = Date.now();
+        that.dynamic_update(that.queue[that.queue.length-1]);
+        that.queue = [];
+      } else {
+        that.wait = false;
+      }
+      if ((msg.msg_type == "Ready") && msg.content) {
+        console.log("Python callback returned following output:", msg.content);
+      } else if (msg.msg_type == "Error") {
+        console.log("Python failed with the following traceback:", msg.traceback)
+      }
+    }
+    var comm = HoloViews.comm_manager.get_client_comm(this.plot_id, this.id+'_client', ack_callback);
+    return comm
+  }
+}
+
+HoloViewsWidget.prototype.msg_handler = function(msg) {
+  var metadata = msg.metadata;
+  if ((metadata.msg_type == "Ready")) {
+    if (metadata.content) {
+      console.log("Python callback returned following output:", metadata.content);
+    }
+	return;
+  } else if (metadata.msg_type == "Error") {
+    console.log("Python failed with the following traceback:", metadata.traceback)
+    return
+  }
+  this.process_msg(msg)
+}
+
+HoloViewsWidget.prototype.process_msg = function(msg) {
+}
+
+function SelectionWidget(frames, id, slider_ids, keyMap, dim_vals, notFound, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.frames = frames;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.slider_ids = slider_ids;
+  this.keyMap = keyMap
+  this.current_frame = 0;
+  this.current_vals = dim_vals;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.notFound = notFound;
+  this.cached = cached;
+  this.dynamic = dynamic;
+  this.cache = {};
+  this.json_path = json_path;
+  this.init_slider(this.current_vals[0]);
+  this.queue = [];
+  this.wait = false;
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms();
+  }
+}
+
+SelectionWidget.prototype = new HoloViewsWidget;
+
+
+SelectionWidget.prototype.get_key = function(current_vals) {
+  var key = "(";
+  for (var i=0; i<this.slider_ids.length; i++)
+  {
+    var val = this.current_vals[i];
+    if (!(typeof val === 'string')) {
+      if (val % 1 === 0) { val = val.toFixed(1); }
+      else { val = val.toFixed(10); val = val.slice(0, val.length-1);}
+    }
+    key += "'" + val + "'";
+    if(i != this.slider_ids.length-1) { key += ', ';}
+    else if(this.slider_ids.length == 1) { key += ',';}
+  }
+  key += ")";
+  return this.keyMap[key];
+}
+
+SelectionWidget.prototype.set_frame = function(dim_val, dim_idx){
+  this.current_vals[dim_idx] = dim_val;
+  var key = this.current_vals;
+  if (!this.dynamic) {
+    key = this.get_key(key)
+  }
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(key);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.current_frame = key;
+    this.wait = true;
+    this.dynamic_update(key)
+  } else if (key !== undefined) {
+    this.update(key)
+  }
+}
+
+
+/* Define the ScrubberWidget class */
+function ScrubberWidget(frames, num_frames, id, interval, load_json, mode, cached, json_path, dynamic, plot_id){
+  this.slider_id = "_anim_slider" + id;
+  this.loop_select_id = "_anim_loop_select" + id;
+  this.id = id;
+  this.plot_id = plot_id;
+  this.interval = interval;
+  this.current_frame = 0;
+  this.direction = 0;
+  this.dynamic = dynamic;
+  this.timer = null;
+  this.load_json = load_json;
+  this.mode = mode;
+  this.cached = cached;
+  this.frames = frames;
+  this.cache = {};
+  this.length = num_frames;
+  this.json_path = json_path;
+  document.getElementById(this.slider_id).max = this.length - 1;
+  this.init_slider(0);
+  this.wait = false;
+  this.queue = [];
+  if (!this.cached || this.dynamic) {
+    this.comm = this.init_comms()
+  }
+}
+
+ScrubberWidget.prototype = new HoloViewsWidget;
+
+ScrubberWidget.prototype.set_frame = function(frame){
+  this.current_frame = frame;
+  var widget = document.getElementById(this.slider_id);
+  if (widget === null) {
+    this.pause_animation();
+    return
+  }
+  widget.value = this.current_frame;
+  if (this.dynamic || !this.cached) {
+    if ((this.time !== undefined) && ((this.wait) && ((this.time + 10000) > Date.now()))) {
+      this.queue.push(frame);
+      return
+    }
+    this.queue = [];
+    this.time = Date.now();
+    this.wait = true;
+    this.dynamic_update(frame)
+  } else {
+    this.update(frame)
+  }
+}
+
+ScrubberWidget.prototype.get_loop_state = function(){
+  var button_group = document[this.loop_select_id].state;
+  for (var i = 0; i < button_group.length; i++) {
+    var button = button_group[i];
+    if (button.checked) {
+      return button.value;
+    }
+  }
+  return undefined;
+}
+
+
+ScrubberWidget.prototype.next_frame = function() {
+  this.set_frame(Math.min(this.length - 1, this.current_frame + 1));
+}
+
+ScrubberWidget.prototype.previous_frame = function() {
+  this.set_frame(Math.max(0, this.current_frame - 1));
+}
+
+ScrubberWidget.prototype.first_frame = function() {
+  this.set_frame(0);
+}
+
+ScrubberWidget.prototype.last_frame = function() {
+  this.set_frame(this.length - 1);
+}
+
+ScrubberWidget.prototype.slower = function() {
+  this.interval /= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.faster = function() {
+  this.interval *= 0.7;
+  if(this.direction > 0){this.play_animation();}
+  else if(this.direction < 0){this.reverse_animation();}
+}
+
+ScrubberWidget.prototype.anim_step_forward = function() {
+  if(this.current_frame < this.length - 1){
+    this.next_frame();
+  }else{
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.first_frame();
+    }else if(loop_state == "reflect"){
+      this.last_frame();
+      this.reverse_animation();
+    }else{
+      this.pause_animation();
+      this.last_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.anim_step_reverse = function() {
+  if(this.current_frame > 0){
+    this.previous_frame();
+  } else {
+    var loop_state = this.get_loop_state();
+    if(loop_state == "loop"){
+      this.last_frame();
+    }else if(loop_state == "reflect"){
+      this.first_frame();
+      this.play_animation();
+    }else{
+      this.pause_animation();
+      this.first_frame();
+    }
+  }
+}
+
+ScrubberWidget.prototype.pause_animation = function() {
+  this.direction = 0;
+  if (this.timer){
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+ScrubberWidget.prototype.play_animation = function() {
+  this.pause_animation();
+  this.direction = 1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_forward();}, this.interval);
+}
+
+ScrubberWidget.prototype.reverse_animation = function() {
+  this.pause_animation();
+  this.direction = -1;
+  var t = this;
+  if (!this.timer) this.timer = setInterval(function(){t.anim_step_reverse();}, this.interval);
+}
+
+function extend(destination, source) {
+  for (var k in source) {
+    if (source.hasOwnProperty(k)) {
+      destination[k] = source[k];
+    }
+  }
+  return destination;
+}
+
+function update_widget(widget, values) {
+  if (widget.hasClass("ui-slider")) {
+    widget.slider('option', {
+      min: 0,
+      max: values.length-1,
+      dim_vals: values,
+      value: 0,
+      dim_labels: values
+    })
+    widget.slider('option', 'slide').call(widget, event, {value: 0})
+  } else {
+    widget.empty();
+    for (var i=0; i<values.length; i++){
+      widget.append($("<option>", {
+        value: i,
+        text: values[i]
+      }))
+    };
+    widget.data('values', values);
+    widget.data('value', 0);
+    widget.trigger("change");
+  };
+}
+
+function init_slider(id, plot_id, dim, values, next_vals, labels, dynamic, step, value, next_dim,
+                     dim_idx, delay, jQueryUI_CDN, UNDERSCORE_CDN) {
+  // Slider JS Block START
+  function loadcssfile(filename){
+    var fileref=document.createElement("link")
+    fileref.setAttribute("rel", "stylesheet")
+    fileref.setAttribute("type", "text/css")
+    fileref.setAttribute("href", filename)
+    document.getElementsByTagName("head")[0].appendChild(fileref)
+  }
+  loadcssfile("https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css");
+  /* Check if jQuery and jQueryUI have been loaded
+     otherwise load with require.js */
+  var jQuery = window.jQuery,
+    // check for old versions of jQuery
+    oldjQuery = jQuery && !!jQuery.fn.jquery.match(/^1\.[0-4](\.|$)/),
+    jquery_path = '',
+    paths = {},
+    noConflict;
+  var jQueryUI = jQuery.ui;
+  // check for jQuery
+  if (!jQuery || oldjQuery) {
+    // load if it's not available or doesn't meet min standards
+    paths.jQuery = jQuery;
+    noConflict = !!oldjQuery;
+  } else {
+    // register the current jQuery
+    define('jquery', [], function() { return jQuery; });
+  }
+  if (!jQueryUI) {
+    paths.jQueryUI = jQueryUI_CDN.slice(null, -3);
+  } else {
+    define('jQueryUI', [], function() { return jQuery.ui; });
+  }
+  paths.underscore = UNDERSCORE_CDN.slice(null, -3);
+  var jquery_require = {
+    paths: paths,
+    shim: {
+      "jQueryUI": {
+        exports:"$",
+        deps: ['jquery']
+      },
+      "underscore": {
+        exports: '_'
+      }
+    }
+  }
+  require.config(jquery_require);
+  require(["jQueryUI", "underscore"], function(jUI, _){
+    if (noConflict) $.noConflict(true);
+    var vals = values;
+    if (dynamic && vals.constructor === Array) {
+      var default_value = parseFloat(value);
+      var min = parseFloat(vals[0]);
+      var max = parseFloat(vals[vals.length-1]);
+      var wstep = step;
+      var wlabels = [default_value];
+      var init_label = default_value;
+    } else {
+      var min = 0;
+      if (dynamic) {
+        var max = Object.keys(vals).length - 1;
+        var init_label = labels[value];
+        var default_value = values[value];
+      } else {
+        var max = vals.length - 1;
+        var init_label = labels[value];
+        var default_value = value;
+      }
+      var wstep = 1;
+      var wlabels = labels;
+    }
+    function adjustFontSize(text) {
+      var width_ratio = (text.parent().width()/8)/text.val().length;
+      var size = Math.min(0.9, Math.max(0.6, width_ratio))+'em';
+      text.css('font-size', size);
+    }
+    var slider = $('#_anim_widget'+id+'_'+dim);
+    slider.slider({
+      animate: "fast",
+      min: min,
+      max: max,
+      step: wstep,
+      value: default_value,
+      dim_vals: vals,
+      dim_labels: wlabels,
+      next_vals: next_vals,
+      slide: function(event, ui) {
+        var vals = slider.slider("option", "dim_vals");
+        var next_vals = slider.slider("option", "next_vals");
+        var dlabels = slider.slider("option", "dim_labels");
+        if (dynamic) {
+          var dim_val = ui.value;
+          if (vals.constructor === Array) {
+            var label = ui.value;
+          } else {
+            var label = dlabels[ui.value];
+          }
+        } else {
+          var dim_val = vals[ui.value];
+          var label = dlabels[ui.value];
+        }
+        var text = $('#textInput'+id+'_'+dim);
+        text.val(label);
+        adjustFontSize(text);
+        HoloViews.index[plot_id].set_frame(dim_val, dim_idx);
+        if (Object.keys(next_vals).length > 0) {
+          var new_vals = next_vals[dim_val];
+          var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+          update_widget(next_widget, new_vals);
+        }
+      }
+    });
+    slider.keypress(function(event) {
+      if (event.which == 80 || event.which == 112) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "max");
+        for (var i=start; i<=stop; i++) {
+          var delay = i*delay;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+      if (event.which == 82 || event.which == 114) {
+        var start = slider.slider("option", "value");
+        var stop =  slider.slider("option", "min");
+        var count = 0;
+        for (var i=start; i>=stop; i--) {
+          var delay = count*delay;
+          count = count + 1;
+          $.proxy(function doSetTimeout(i) { setTimeout($.proxy(function() {
+            var val = {value:i};
+            slider.slider('value',i);
+            slider.slider("option", "slide")(null, val);
+          }, slider), delay);}, slider)(i);
+        }
+      }
+    });
+    var textInput = $('#textInput'+id+'_'+dim)
+    textInput.val(init_label);
+    adjustFontSize(textInput);
+  });
+}
+
+function init_dropdown(id, plot_id, dim, vals, value, next_vals, labels, next_dim, dim_idx, dynamic) {
+  var widget = $("#_anim_widget"+id+'_'+dim);
+  widget.data('values', vals)
+  for (var i=0; i<vals.length; i++){
+    if (dynamic) {
+      var val = vals[i];
+    } else {
+      var val = i;
+    }
+    widget.append($("<option>", {
+      value: val,
+      text: labels[i]
+    }));
+  };
+  widget.data("next_vals", next_vals);
+  widget.val(value);
+  widget.on('change', function(event, ui) {
+    if (dynamic) {
+      var dim_val = parseInt(this.value);
+    } else {
+      var dim_val = $.data(this, 'values')[this.value];
+    }
+    var next_vals = $.data(this, "next_vals");
+    if (Object.keys(next_vals).length > 0) {
+      var new_vals = next_vals[dim_val];
+      var next_widget = $('#_anim_widget'+id+'_'+next_dim);
+      update_widget(next_widget, new_vals);
+    }
+    var widgets = HoloViews.index[plot_id]
+    if (widgets) {
+      widgets.set_frame(dim_val, dim_idx);
+    }
+  });
+}
+
+
+if (window.HoloViews === undefined) {
+  window.HoloViews = {}
+  window.PyViz = window.HoloViews
+} else if (window.PyViz === undefined) {
+  window.PyViz = window.HoloViews
+}
+
+
+var _namespace = {
+  init_slider: init_slider,
+  init_dropdown: init_dropdown,
+  comms: {},
+  comm_status: {},
+  index: {},
+  plot_index: {},
+  kernels: {},
+  receivers: {}
+}
+
+for (var k in _namespace) {
+  if (!(k in window.HoloViews)) {
+    window.HoloViews[k] = _namespace[k];
+  }
+}
+
+// Define Bokeh specific subclasses
+function BokehSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function BokehScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+BokehSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+BokehScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var BokehMethods = {
+  update_cache : function(){
+    for (var index in this.frames) {
+      this.frames[index] = JSON.parse(this.frames[index]);
+    }
+  },
+  update : function(current){
+    if (current === undefined) {
+      return;
+    }
+    var data = this.frames[current];
+    if (data !== undefined) {
+      if (data.root in HoloViews.plot_index) {
+        var doc = HoloViews.plot_index[data.root].model.document;
+      } else {
+        var doc = Bokeh.index[data.root].model.document;
+      }
+      doc.apply_json_patch(data.content);
+    }
+  },
+  init_comms: function() {
+    if (Bokeh.protocol !== undefined) {
+      this.receiver = new Bokeh.protocol.Receiver()
+    } else {
+      this.receiver = null;
+    }
+    return HoloViewsWidget.prototype.init_comms.call(this);
+  },
+  process_msg : function(msg) {
+    if (this.plot_id in HoloViews.plot_index) {
+      var doc = HoloViews.plot_index[this.plot_id].model.document;
+    } else {
+      var doc = Bokeh.index[this.plot_id].model.document;
+    }
+    if (this.receiver === null) { return }
+    var receiver = this.receiver;
+    if (msg.buffers.length > 0) {
+      receiver.consume(msg.buffers[0].buffer)
+    } else {
+      receiver.consume(msg.content.data)
+    }
+    const comm_msg = receiver.message;
+    if ((comm_msg != null) && (doc != null)) {
+      doc.apply_json_patch(comm_msg.content, comm_msg.buffers)
+    }
+  }
+}
+
+// Extend Bokeh widgets with backend specific methods
+extend(BokehSelectionWidget.prototype, BokehMethods);
+extend(BokehScrubberWidget.prototype, BokehMethods);
+
+window.HoloViews.BokehSelectionWidget = BokehSelectionWidget
+window.HoloViews.BokehScrubberWidget = BokehScrubberWidget
+
+// Define MPL specific subclasses
+function MPLSelectionWidget() {
+  SelectionWidget.apply(this, arguments);
+}
+
+function MPLScrubberWidget() {
+  ScrubberWidget.apply(this, arguments);
+}
+
+// Let them inherit from the baseclasses
+MPLSelectionWidget.prototype = Object.create(SelectionWidget.prototype);
+MPLScrubberWidget.prototype = Object.create(ScrubberWidget.prototype);
+
+// Define methods to override on widgets
+var MPLMethods = {
+  init_slider : function(init_val){
+    if(this.load_json) {
+      this.from_json()
+    } else {
+      this.update_cache();
+    }
+    if (this.dynamic | !this.cached | (this.current_vals === undefined)) {
+      this.update(0)
+    } else {
+      this.set_frame(this.current_vals[0], 0)
+    }
+  },
+  process_msg : function(msg) {
+    var data = msg.content.data;
+    this.frames[this.current] = data;
+    this.update_cache(true);
+    this.update(this.current);
+  }
+}
+// Extend MPL widgets with backend specific methods
+extend(MPLSelectionWidget.prototype, MPLMethods);
+extend(MPLScrubberWidget.prototype, MPLMethods);
+
+window.HoloViews.MPLSelectionWidget = MPLSelectionWidget
+window.HoloViews.MPLScrubberWidget = MPLScrubberWidget
+</script>
+<script type="text/javascript">
+    function JupyterCommManager() {
+    }
+
+    JupyterCommManager.prototype.register_target = function(plot_id, comm_id, msg_handler) {
+      if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        comm_manager.register_target(comm_id, function(comm) {
+          comm.on_msg(msg_handler);
+        });
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        window.PyViz.kernels[plot_id].registerCommTarget(comm_id, function(comm) {
+          comm.onMsg = msg_handler;
+        });
+      }
+    }
+
+    JupyterCommManager.prototype.get_client_comm = function(plot_id, comm_id, msg_handler) {
+      if (comm_id in window.PyViz.comms) {
+        return window.PyViz.comms[comm_id];
+      } else if (window.comm_manager || ((window.Jupyter !== undefined) && (Jupyter.notebook.kernel != null))) {
+        var comm_manager = window.comm_manager || Jupyter.notebook.kernel.comm_manager;
+        var comm = comm_manager.new_comm(comm_id, {}, {}, {}, comm_id);
+        if (msg_handler) {
+          comm.on_msg(msg_handler);
+        }
+      } else if ((plot_id in window.PyViz.kernels) && (window.PyViz.kernels[plot_id])) {
+        var comm = window.PyViz.kernels[plot_id].connectToComm(comm_id);
+        comm.open();
+        if (msg_handler) {
+          comm.onMsg = msg_handler;
+        }
+      }
+
+      window.PyViz.comms[comm_id] = comm;
+      return comm;
+    }
+
+    window.PyViz.comm_manager = new JupyterCommManager();
+    </script>
+
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.6/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://code.jquery.com/ui/1.10.4/themes/smoothness/jquery-ui.css">
+<style>div.bk-hbox {
+    display: flex;
+    justify-content: center;
+}
+
+div.bk-hbox div.bk-plot {
+    padding: 8px;
+}
+
+div.bk-hbox div.bk-data-table {
+    padding: 20px;
+}
+
+div.hololayout {
+  display: flex;
+  align-items: center;
+  margin: 0;
+}
+
+div.holoframe {
+  width: 75%;
+}
+
+div.holowell {
+  display: flex;
+  align-items: center;
+}
+
+form.holoform {
+  background-color: #fafafa;
+  border-radius: 5px;
+  overflow: hidden;
+  padding-left: 0.8em;
+  padding-right: 0.8em;
+  padding-top: 0.4em;
+  padding-bottom: 0.4em;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
+  margin-bottom: 20px;
+  border: 1px solid #e3e3e3;
+}
+
+div.holowidgets {
+  padding-right: 0;
+  width: 25%;
+}
+
+div.holoslider {
+  min-height: 0 !important;
+  height: 0.8em;
+  width: 100%;
+}
+
+div.holoformgroup {
+  padding-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+div.hologroup {
+  padding-left: 0;
+  padding-right: 0.8em;
+  width: 100%;
+}
+
+.holoselect {
+  width: 92%;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+.holotext {
+  padding-left:  0.5em;
+  padding-right: 0;
+  width: 100%;
+}
+
+.holowidgets .ui-resizable-se {
+  visibility: hidden
+}
+
+.holoframe > .ui-resizable-se {
+  visibility: hidden
+}
+
+.holowidgets .ui-resizable-s {
+  visibility: hidden
+}
+
+
+/* CSS rules for noUISlider based slider used by JupyterLab extension  */
+
+.noUi-handle {
+  width: 20px !important;
+  height: 20px !important;
+  left: -5px !important;
+  top: -5px !important;
+}
+
+.noUi-handle:before, .noUi-handle:after {
+  visibility: hidden;
+  height: 0px;
+}
+
+.noUi-target {
+  margin-left: 0.5em;
+  margin-right: 0.5em;
+}
+</style><div style='display: table; margin: 0 auto;'>
+
+
+
+
+
+
+  <div class="bk-root" id="00d2cf42-0cb5-40fc-b87f-9f047255b0b2" data-root-id="55665"></div>
+
+<script type="text/javascript">
+  (function(root) {
+  function embed_document(root) {
+    
+  var docs_json = {"300f2294-ae52-4c6b-b4ee-508cd5227f92":{"roots":{"references":[{"attributes":{"children":[{"id":"55664","type":"Div"},{"id":"55663","type":"Column"}]},"id":"55665","type":"Column"},{"attributes":{},"id":"55229","type":"SaveTool"},{"attributes":{"overlay":{"id":"55522","type":"BoxAnnotation"}},"id":"55482","type":"BoxZoomTool"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"55244","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55225","type":"BasicTicker"}},"id":"55224","type":"LinearAxis"},{"attributes":{},"id":"55492","type":"BasicTickFormatter"},{"attributes":{},"id":"55506","type":"Selection"},{"attributes":{"data_source":{"id":"54872","type":"ColumnDataSource"},"glyph":{"id":"54875","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"54877","type":"Scatter"},"nonselection_glyph":{"id":"54876","type":"Scatter"},"selection_glyph":null,"view":{"id":"54879","type":"CDSView"}},"id":"54878","type":"GlyphRenderer"},{"attributes":{},"id":"54703","type":"BasicTicker"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"54958","type":"HoverTool"},{"id":"54979","type":"SaveTool"},{"id":"54980","type":"PanTool"},{"id":"54981","type":"WheelZoomTool"},{"id":"54982","type":"BoxZoomTool"},{"id":"54983","type":"ResetTool"}]},"id":"54984","type":"Toolbar"},{"attributes":{"callback":null,"end":8054.79997575,"reset_end":8054.79997575,"reset_start":-538.52098575,"start":-538.52098575,"tags":[[["Precipitation","Precipitation",null]]]},"id":"54689","type":"Range1d"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55010","type":"Scatter"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"55458","type":"HoverTool"},{"id":"55479","type":"SaveTool"},{"id":"55480","type":"PanTool"},{"id":"55481","type":"WheelZoomTool"},{"id":"55482","type":"BoxZoomTool"},{"id":"55483","type":"ResetTool"}]},"id":"55484","type":"Toolbar"},{"attributes":{},"id":"54770","type":"UnionRenderers"},{"attributes":{},"id":"55479","type":"SaveTool"},{"attributes":{},"id":"54980","type":"PanTool"},{"attributes":{},"id":"54867","type":"BasicTickFormatter"},{"attributes":{},"id":"55123","type":"Selection"},{"attributes":{},"id":"54895","type":"UnionRenderers"},{"attributes":{"data_source":{"id":"55122","type":"ColumnDataSource"},"glyph":{"id":"55125","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55127","type":"Scatter"},"nonselection_glyph":{"id":"55126","type":"Scatter"},"selection_glyph":null,"view":{"id":"55129","type":"CDSView"}},"id":"55128","type":"GlyphRenderer"},{"attributes":{},"id":"54845","type":"BasicTicker"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55375","type":"Scatter"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55508","type":"Scatter"},{"attributes":{"callback":null,"end":33.622643333300005,"reset_end":33.622643333300005,"reset_start":-21.7490766667,"start":-21.7490766667,"tags":[[["Temperature","Temperature",null]]]},"id":"54690","type":"Range1d"},{"attributes":{"data_source":{"id":"54997","type":"ColumnDataSource"},"glyph":{"id":"55000","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55002","type":"Scatter"},"nonselection_glyph":{"id":"55001","type":"Scatter"},"selection_glyph":null,"view":{"id":"55004","type":"CDSView"}},"id":"55003","type":"GlyphRenderer"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55002","type":"Scatter"},{"attributes":{"callback":null,"data":{"Country":["Australia","New Caledonia","New Zealand","Papua New Guinea","Solomon Islands","Vanuatu"],"Precipitation":{"__ndarray__":"rfpcbcUufUBGJXUCGtucQHNoke18KZxAsp3vp8YjqkBMN4lBYKynQJyiI7k8+Z9A","dtype":"float64","shape":[6]},"Realm":["Australasian","Australasian","Australasian","Australasian","Australasian","Australasian"],"Temperature":{"__ndarray__":"SFD8GHP/NUCM22gAb4E2QA2reCPzuCNAlqebn/UHOUA22KwfiM05QCnWgZhxJDhA","dtype":"float64","shape":[6]},"Year":[1996,1996,1996,1996,1996,1996]},"selected":{"id":"54873","type":"Selection"},"selection_policy":{"id":"54893","type":"UnionRenderers"}},"id":"54872","type":"ColumnDataSource"},{"attributes":{},"id":"54698","type":"LinearScale"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54875","type":"Scatter"},{"attributes":{},"id":"55244","type":"BasicTickFormatter"},{"attributes":{"data_source":{"id":"54730","type":"ColumnDataSource"},"glyph":{"id":"54733","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"54735","type":"Scatter"},"nonselection_glyph":{"id":"54734","type":"Scatter"},"selection_glyph":null,"view":{"id":"54737","type":"CDSView"}},"id":"54736","type":"GlyphRenderer"},{"attributes":{"dimension":1,"ticker":{"id":"55225","type":"BasicTicker"}},"id":"55228","type":"Grid"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55127","type":"Scatter"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54883","type":"Scatter"},{"attributes":{},"id":"55467","type":"LinearScale"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"55119","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55100","type":"BasicTicker"}},"id":"55099","type":"LinearAxis"},{"attributes":{"source":{"id":"54872","type":"ColumnDataSource"}},"id":"54879","type":"CDSView"},{"attributes":{},"id":"55367","type":"BasicTickFormatter"},{"attributes":{},"id":"55018","type":"UnionRenderers"},{"attributes":{"children":[[{"id":"54693","subtype":"Figure","type":"Plot"},0,0],[{"id":"54835","subtype":"Figure","type":"Plot"},0,1],[{"id":"54960","subtype":"Figure","type":"Plot"},1,0],[{"id":"55085","subtype":"Figure","type":"Plot"},1,1],[{"id":"55210","subtype":"Figure","type":"Plot"},2,0],[{"id":"55335","subtype":"Figure","type":"Plot"},2,1],[{"id":"55460","subtype":"Figure","type":"Plot"},3,0]]},"id":"55660","type":"GridBox"},{"attributes":{},"id":"54840","type":"LinearScale"},{"attributes":{},"id":"55242","type":"BasicTickFormatter"},{"attributes":{"overlay":{"id":"55022","type":"BoxAnnotation"}},"id":"54982","type":"BoxZoomTool"},{"attributes":{"text":"Indomalayan","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"54961","type":"Title"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"55083","type":"HoverTool"},{"id":"55104","type":"SaveTool"},{"id":"55105","type":"PanTool"},{"id":"55106","type":"WheelZoomTool"},{"id":"55107","type":"BoxZoomTool"},{"id":"55108","type":"ResetTool"}]},"id":"55109","type":"Toolbar"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55133","type":"Scatter"},{"attributes":{"source":{"id":"55497","type":"ColumnDataSource"}},"id":"55504","type":"CDSView"},{"attributes":{},"id":"55342","type":"LinearScale"},{"attributes":{"ticker":{"id":"54845","type":"BasicTicker"}},"id":"54848","type":"Grid"},{"attributes":{"callback":null,"data":{"Country":["Bangladesh","Bhutan","Brunei Darussalam","Cambodia","India","Indonesia","Lao People's Democratic Republic","Malaysia","Myanmar","Nepal","Pakistan","Philippines","Singapore","Sri Lanka","Thailand","Timor-Leste","Viet Nam"],"Precipitation":{"__ndarray__":"kwA1tayUoEBLk1LQbY2cQOXQItu5eqRAPzp15RNlm0D9pNqng4GQQHE9CtejhKhAOGdEaa+inkCq8dJN4vSmQHFV2XfF06FAwCFUqRmhlUDDnnb4a+9xQMgHPZt1AaNA1JrmHccbo0DUghd9xa2SQOLplbKstJhAAd4CCYpwlUDF/rJ7chOfQA==","dtype":"float64","shape":[17]},"Realm":["Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan"],"Temperature":{"__ndarray__":"F9nO91NbOUDgeCewExUpQL3uhe5/WTpAL90kBoEpPEAYoEXbHgo5QJCraQOdxjpAgKzPsCtoOEBGn2fYFWA6QEXjYcYBkTdAOZ7m01CAKkBg2l9RJGo1QBP9sqAdeTpAywVW6QFWPEAKXbGawbo7QKb/1FO+YjtAZn3yiyVvOkAQ9CiBuhI5QA==","dtype":"float64","shape":[17]},"Year":[2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016]},"selected":{"id":"55006","type":"Selection"},"selection_policy":{"id":"55020","type":"UnionRenderers"}},"id":"55005","type":"ColumnDataSource"},{"attributes":{},"id":"55020","type":"UnionRenderers"},{"attributes":{"callback":null,"renderers":[{"id":"55253","type":"GlyphRenderer"},{"id":"55261","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"55208","type":"HoverTool"},{"attributes":{},"id":"54842","type":"LinearScale"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"54869","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"54850","type":"BasicTicker"}},"id":"54849","type":"LinearAxis"},{"attributes":{"source":{"id":"54730","type":"ColumnDataSource"}},"id":"54737","type":"CDSView"},{"attributes":{},"id":"54970","type":"BasicTicker"},{"attributes":{},"id":"55119","type":"BasicTickFormatter"},{"attributes":{"callback":null,"data":{"Country":["Canada","Greenland","United States of America"],"Precipitation":{"__ndarray__":"ZF3cRgMmfUDxY8xdS9CCQBgmUwUjZoVA","dtype":"float64","shape":[3]},"Realm":["Nearctic","Nearctic","Nearctic"],"Temperature":{"__ndarray__":"L2Cbr3/cE8DtDb4wmaouwAL91dLJDyJA","dtype":"float64","shape":[3]},"Year":[2016,2016,2016]},"selected":{"id":"55131","type":"Selection"},"selection_policy":{"id":"55145","type":"UnionRenderers"}},"id":"55130","type":"ColumnDataSource"},{"attributes":{"ticker":{"id":"54970","type":"BasicTicker"}},"id":"54973","type":"Grid"},{"attributes":{},"id":"54881","type":"Selection"},{"attributes":{"dimension":1,"ticker":{"id":"54850","type":"BasicTicker"}},"id":"54853","type":"Grid"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55377","type":"Scatter"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55383","type":"Scatter"},{"attributes":{},"id":"55381","type":"Selection"},{"attributes":{},"id":"55092","type":"LinearScale"},{"attributes":{"callback":null,"data":{"Country":["Micronesia (Federated States of)","Fiji","Kiribati","Marshall Islands","Northern Mariana Islands","Palau","Samoa","Tonga","Tuvalu"],"Precipitation":{"__ndarray__":"JzEIrNzNq0BkXdxGI1erQFR0JJf/UIRAsHJokW0FqUBWDi2yXUa9QFTjpZtE/KZA7nw/NV4IrEBUUiegiX+dQPhT46VbMKZA","dtype":"float64","shape":[9]},"Realm":["Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian"],"Temperature":{"__ndarray__":"L90kBoENO0AXzl0mnU84QHezLkl4gTtAw96cNtC5O0BtYe5/bV47QJvbrNUx2TtAIRSDm5/FO0BApN++Dgg5QEdniD4yPDxA","dtype":"float64","shape":[9]},"Year":[1996,1996,1996,1996,1996,1996,1996,1996,1996]},"selected":{"id":"55373","type":"Selection"},"selection_policy":{"id":"55393","type":"UnionRenderers"}},"id":"55372","type":"ColumnDataSource"},{"attributes":{},"id":"55481","type":"WheelZoomTool"},{"attributes":{},"id":"55465","type":"LinearScale"},{"attributes":{},"id":"55131","type":"Selection"},{"attributes":{},"id":"54981","type":"WheelZoomTool"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"55022","type":"BoxAnnotation"},{"attributes":{"ticker":{"id":"55220","type":"BasicTicker"}},"id":"55223","type":"Grid"},{"attributes":{"ticker":{"id":"55470","type":"BasicTicker"}},"id":"55473","type":"Grid"},{"attributes":{},"id":"55095","type":"BasicTicker"},{"attributes":{"style":{"white-space":"nowrap"},"text":"<span style=\"color:black;font-family:Arial;font-style:bold;font-weight:bold;font-size:12pt\">Temperature and precipitation</span>","width":450},"id":"55664","type":"Div"},{"attributes":{},"id":"54979","type":"SaveTool"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54750","type":"Scatter"},{"attributes":{},"id":"54700","type":"LinearScale"},{"attributes":{"dimension":1,"ticker":{"id":"55100","type":"BasicTicker"}},"id":"55103","type":"Grid"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54877","type":"Scatter"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"54867","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"54845","type":"BasicTicker"}},"id":"54844","type":"LinearAxis"},{"attributes":{"data_source":{"id":"54880","type":"ColumnDataSource"},"glyph":{"id":"54883","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"54885","type":"Scatter"},"nonselection_glyph":{"id":"54884","type":"Scatter"},"selection_glyph":null,"view":{"id":"54887","type":"CDSView"}},"id":"54886","type":"GlyphRenderer"},{"attributes":{"text":"Neotropical","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"55211","type":"Title"},{"attributes":{"source":{"id":"55122","type":"ColumnDataSource"}},"id":"55129","type":"CDSView"},{"attributes":{},"id":"55483","type":"ResetTool"},{"attributes":{},"id":"55220","type":"BasicTicker"},{"attributes":{},"id":"54873","type":"Selection"},{"attributes":{},"id":"55480","type":"PanTool"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"54992","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"54970","type":"BasicTicker"}},"id":"54969","type":"LinearAxis"},{"attributes":{},"id":"54850","type":"BasicTicker"},{"attributes":{},"id":"55006","type":"Selection"},{"attributes":{},"id":"55233","type":"ResetTool"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"55492","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55470","type":"BasicTicker"}},"id":"55469","type":"LinearAxis"},{"attributes":{"callback":null,"renderers":[{"id":"54878","type":"GlyphRenderer"},{"id":"54886","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"54833","type":"HoverTool"},{"attributes":{"text":"Nearctic","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"55086","type":"Title"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55134","type":"Scatter"},{"attributes":{"callback":null,"data":{"Country":["Antigua and Barbuda","Argentina","Bahamas","Barbados","Belize","Bolivia (Plurinational State of)","Brazil","Chile","Colombia","Costa Rica","Cuba","Dominica","Dominican Republic","Ecuador","El Salvador","Grenada","Guatemala","Guyana","Haiti","Honduras","Jamaica","Mexico","Nicaragua","Panama","Paraguay","Peru","Puerto Rico","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Suriname","Trinidad and Tobago","Uruguay","Venezuela (Bolivarian Republic of)"],"Precipitation":{"__ndarray__":"Gw3gLXCfpEBDHOvitmKCQMX+snuyMJZAeAskKJ53oUAc6+I22uKdQB9oBYZMbpBAt9EA3oJQnEAf9GxWfeOAQH9qvHSTR6ZAXdxGAzh5q0C4QILih46WQEp7gy+Me6xARIts53v3k0DD0ytl2WObQNRlMbFZW5xAUdobfOFJmkCgibDhqVWkQKs+V1vxvqNAoImw4SltlUAydy0hH3ueQDy9UpYBb6NAiGNd3Aa1hUC4QILiZ7+lQKH4MeaOSqRAf9k9eRjmk0A+6Nmser6XQLU3+MIktJlALNSa5j19okDb+X5qPAOmQJyiI7n8jZxAFmpN805YpEC5/If0G/2ZQBueXilLLZFA+1xtxT7HoEA=","dtype":"float64","shape":[34]},"Realm":["Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical"],"Temperature":{"__ndarray__":"70O2GCnZOUC3BMlMfPAsQAK8BRIU5zhA/C///NFqOkAhH/RsVhk5QKp34HfmqDRAGw3gLZAcOUAmEjXi3MEgQACRfvs6YDhAS72Wa+R9OEDjK6nupFw5QJVliGNdnDhAnzws1Jo+OED379JyjVg1QP5l9+RhuTdAMCqpE9DAOkCPzWb6Ekc3QO0CTV/i1jlADXwdXZLQOEDx9EpZhng3QEQFX713LTlAt0vzs34oNUBxrIvbaMA4QHiFFv75LzlAcT0K16MYN0AH2YoikT8zQPyp8dJNXjlAn6A8B6nqOEAVjErqBAQ6QI4RYej+/zpAJfsPxIz3OUDKzrN+IC46QAT5ASNC0jFAF1PBzc+WOUA=","dtype":"float64","shape":[34]},"Year":[1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996]},"selected":{"id":"55248","type":"Selection"},"selection_policy":{"id":"55268","type":"UnionRenderers"}},"id":"55247","type":"ColumnDataSource"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"54725","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"54703","type":"BasicTicker"}},"id":"54702","type":"LinearAxis"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55384","type":"Scatter"},{"attributes":{"callback":null,"renderers":[{"id":"55128","type":"GlyphRenderer"},{"id":"55136","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"55083","type":"HoverTool"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54885","type":"Scatter"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"54691","type":"HoverTool"},{"id":"54712","type":"SaveTool"},{"id":"54713","type":"PanTool"},{"id":"54714","type":"WheelZoomTool"},{"id":"54715","type":"BoxZoomTool"},{"id":"54716","type":"ResetTool"}]},"id":"54717","type":"Toolbar"},{"attributes":{"text":"Palearctic","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"55461","type":"Title"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54876","type":"Scatter"},{"attributes":{"callback":null,"data":{"Country":["Micronesia (Federated States of)","Fiji","Kiribati","Marshall Islands","Northern Mariana Islands","Palau","Samoa","Tonga","Tuvalu"],"Precipitation":{"__ndarray__":"c2iR7fytrEBQjZduUq6rQHgLJCj+LZJAvHSTGIQ2okBYObTIFqS8QJF++zoQdqRAzojS3gDepEC6SQwCaxidQClcj8K17alA","dtype":"float64","shape":[9]},"Realm":["Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian","Oceanian"],"Temperature":{"__ndarray__":"EhQ/xtzRO0D5q9iEobc4QHezLkl4gTtAH4XrUbhuPEBVJbnXXFQ8QCbN93gOXjxAnmmanMfeO0BQE6WYlm85QAs7tKNLxjxA","dtype":"float64","shape":[9]},"Year":[2016,2016,2016,2016,2016,2016,2016,2016,2016]},"selected":{"id":"55381","type":"Selection"},"selection_policy":{"id":"55395","type":"UnionRenderers"}},"id":"55380","type":"ColumnDataSource"},{"attributes":{},"id":"55231","type":"WheelZoomTool"},{"attributes":{"ticker":{"id":"54703","type":"BasicTicker"}},"id":"54706","type":"Grid"},{"attributes":{},"id":"54708","type":"BasicTicker"},{"attributes":{"callback":null,"data":{"Country":["Antigua and Barbuda","Argentina","Bahamas","Barbados","Belize","Bolivia (Plurinational State of)","Brazil","Chile","Colombia","Costa Rica","Cuba","Dominica","Dominican Republic","Ecuador","El Salvador","Grenada","Guatemala","Guyana","Haiti","Honduras","Jamaica","Mexico","Nicaragua","Panama","Paraguay","Peru","Puerto Rico","Saint Kitts and Nevis","Saint Lucia","Saint Vincent and the Grenadines","Suriname","Trinidad and Tobago","Uruguay","Venezuela (Bolivarian Republic of)"],"Precipitation":{"__ndarray__":"rrZif/nipEALJCh+DGWDQGB2Tx6WlJZAsHJokY0voUAVjErqBCWfQKVOQBPhLYxAq8/VVixrmUCq8dJNYot6QIGVQ4ssy6FAlrIMcUzYo0AAAAAAQHiUQCPb+X7qCK1Aq8/VVizQn0CoV8oyhKaeQLml1ZBY2plAQxzr4jZ2mkBcj8L1qHCjQARWDi1SBKFAGsBbIEHznECrPldbMZWZQDVeuklM+5pAEtpyLsWViEBRa5p3nAOaQMRCrWleo59AKVyPwjVFk0AmUwWjUg6XQKmkTkDTmKRAxm00gBdpokAtsp3vR0CmQKRwPQrXJZxA+zpwzsgroUA/V1ux/42ZQMSxLm7jG5RAGw3gLdDSnEA=","dtype":"float64","shape":[34]},"Realm":["Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical","Neotropical"],"Temperature":{"__ndarray__":"wNUSF21/OkB63/jaMwMtQMiNSsXZ1zlAt23wqvQMO0B/2T15WEA6QOviNhrAEzVAoeGlwO8EOkDJz10Bct8hQCninOx5eTlA4W+j3JBNOUDSC0/UvzU6QFCYCEDJUjlANKK0N/jaOEC+qosAlFQ2QCNKe4MvADlAVGmzxUiNO0Af/90nNJo4QF7Fut24cjpA/73sw2eAOUD3am/LWok4QIjpagbL4zlAEce6uI22NUBNhA1Pr6w5QA6+MJkqKDpARHTgwTxVN0BoLd1JMV00QBsYUf9G+DlAeHqlLEOMOUB0OyMlUMM6QGW10SUJxztA3p74VhFnOkDo5B3ME/k6QOZn+3yBqDFAfPKwUGt6OkA=","dtype":"float64","shape":[34]},"Year":[2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016]},"selected":{"id":"55256","type":"Selection"},"selection_policy":{"id":"55270","type":"UnionRenderers"}},"id":"55255","type":"ColumnDataSource"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55001","type":"Scatter"},{"attributes":{},"id":"55268","type":"UnionRenderers"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55125","type":"Scatter"},{"attributes":{},"id":"55373","type":"Selection"},{"attributes":{"dimension":1,"ticker":{"id":"55475","type":"BasicTicker"}},"id":"55478","type":"Grid"},{"attributes":{},"id":"54858","type":"ResetTool"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55500","type":"Scatter"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54751","type":"Scatter"},{"attributes":{"source":{"id":"55255","type":"ColumnDataSource"}},"id":"55262","type":"CDSView"},{"attributes":{},"id":"55395","type":"UnionRenderers"},{"attributes":{"align":null,"below":[{"id":"54702","type":"LinearAxis"}],"center":[{"id":"54706","type":"Grid"},{"id":"54711","type":"Grid"},{"id":"54744","type":"Legend"}],"left":[{"id":"54707","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"54736","type":"GlyphRenderer"},{"id":"54752","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"54694","type":"Title"},"toolbar":{"id":"54717","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"54698","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"54700","type":"LinearScale"}},"id":"54693","subtype":"Figure","type":"Plot"},{"attributes":{},"id":"54725","type":"BasicTickFormatter"},{"attributes":{"source":{"id":"55130","type":"ColumnDataSource"}},"id":"55137","type":"CDSView"},{"attributes":{},"id":"54983","type":"ResetTool"},{"attributes":{"callback":null,"data":{"Country":["Angola","Bahrain","Benin","Botswana","Burkina Faso","Burundi","Cameroon","Cabo Verde","Central African Republic","Chad","Comoros","Democratic Republic of the Congo","Congo","C\u00f4te d\u2019Ivoire","Djibouti","Equatorial Guinea","Eritrea","Ethiopia","Gabon","Gambia","Ghana","Guinea","Guinea-Bissau","Kenya","Kuwait","Lesotho","Liberia","Madagascar","Malawi","Mali","Mauritania","Mauritius","Mozambique","Namibia","Niger","Nigeria","Oman","Qatar","Rwanda","Sao Tome and Principe","Saudi Arabia","Senegal","Seychelles","Sierra Leone","Somalia","South Africa","South Sudan","Eswatini","United Republic of Tanzania","Togo","Uganda","United Arab Emirates","Yemen","Zambia","Zimbabwe"],"Precipitation":{"__ndarray__":"owbTMLwnjkBOnNzvUHQyQCdr1EN0nY1AcQM+PwwidkBYkGYs2r2LQOwvuyfPlJZAgufewwXNmkCuR+F6FHt8QNHLKJY7W5ZAxr/PuPDrdkCMFTWYxr2cQG/whckUCZhAnu+nxguHmkA1XrpJTHOUQEj5SbXP/XFAMZkqGBUVoEDpJjEILENyQH8TChFw2oxArthfdk+wm0BWvJF5xDmQQDJaR1UTaZJAJNHLKLZOmkCsHFpkmw+YQAKaCBueWYZAVWr2QCv+XUBy+Q/p97KBQJHtfD+VBaVA6LzGLlHTkECfPCzUmo+MQDJVMCqpzHRAvodLjjs/WEAlBoGVQ8KXQJYmpaDbU4lAkrOwpx3nbkAcQpWaPSNpQLDJGvWwUZNAvAUSFD9mRUCFmbZ/ZWUyQEtZhjjWuZVADeAtkKADnUC5iO/ErCtQQCfChqfXAodAmG4Sg8DHl0ANbJVg8cqjQNuizAYZjXRAqRPQRFheeUCwPbMkAPCOQPUQje7gCodANSkF3d7AkUA1BwjmKFiRQGdEaW9we5VAV1uxv+ziRkDR6A5iZ29lQL7BFybTG4lADeAtkCByfEA=","dtype":"float64","shape":[55]},"Realm":["Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical"],"Temperature":{"__ndarray__":"7RgvAlCONkAr9pfdk5c8QNBPScKrajxATYQNT6/wNkCsomeOvyM9QEbBZM+LNDVAKi8h+shYOUATbDSl4rw3QCo6kst/tDlAtGRmi5EGPEBGMObTULw5QI2XbhKD6DhA1JrmHadcOUA/TOrfCEE7QOCngnZ0zTxAsA5YXt9gOUC65fvOHIs7QOoPpeLstzdAirDh6ZXKOUCtXm2g0148QJXUCWgiODxAauniW0WoOkAR0iuKROY7QJJnbxWxwTlA7RgvAlDaOkCZDTLJyO0sQJSS9iuKLDpAvGkiR02qNkAep+hILqs2QD0VSHUnST1Ax0DGt4rQPED/pwoh+rw3QEVS48rGfDhAiFjsCpC7NUAZ7cnobV08QI0zXt90zDtAEbxJ59Z2OkDD6reK2JY8QBl+SOSoVTRA/esED+ZxOEAdOGdEaRc6QP2H9NvXCT1AIz8KsnikO0BR2ht8YeI6QFumThvo3DtAGeJYF7cNM0AMiDixmik8QETvfBoKQjVARGlv8IU9N0BNIP0bofw7QMrOs34g3jdA9jPNYHk9PEAN4C2QoDg4QE2EDU+vvDZALMkpFWdPNkA=","dtype":"float64","shape":[55]},"Year":[2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016]},"selected":{"id":"54747","type":"Selection"},"selection_policy":{"id":"54770","type":"UnionRenderers"}},"id":"54746","type":"ColumnDataSource"},{"attributes":{"data_source":{"id":"55380","type":"ColumnDataSource"},"glyph":{"id":"55383","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55385","type":"Scatter"},"nonselection_glyph":{"id":"55384","type":"Scatter"},"selection_glyph":null,"view":{"id":"55387","type":"CDSView"}},"id":"55386","type":"GlyphRenderer"},{"attributes":{},"id":"55100","type":"BasicTicker"},{"attributes":{},"id":"55498","type":"Selection"},{"attributes":{},"id":"55104","type":"SaveTool"},{"attributes":{"data_source":{"id":"54746","type":"ColumnDataSource"},"glyph":{"id":"54749","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"54751","type":"Scatter"},"nonselection_glyph":{"id":"54750","type":"Scatter"},"selection_glyph":null,"view":{"id":"54753","type":"CDSView"}},"id":"54752","type":"GlyphRenderer"},{"attributes":{},"id":"55256","type":"Selection"},{"attributes":{},"id":"55270","type":"UnionRenderers"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55009","type":"Scatter"},{"attributes":{},"id":"55475","type":"BasicTicker"},{"attributes":{},"id":"54747","type":"Selection"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"55117","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55095","type":"BasicTicker"}},"id":"55094","type":"LinearAxis"},{"attributes":{"callback":null,"data":{"Country":["Angola","Bahrain","Benin","Botswana","Burkina Faso","Burundi","Cameroon","Cabo Verde","Central African Republic","Chad","Comoros","Democratic Republic of the Congo","Congo","C\u00f4te d\u2019Ivoire","Djibouti","Equatorial Guinea","Eritrea","Ethiopia","Gabon","Gambia","Ghana","Guinea","Guinea-Bissau","Kenya","Kuwait","Lesotho","Liberia","Madagascar","Malawi","Mali","Mauritania","Mauritius","Mozambique","Namibia","Niger","Nigeria","Oman","Qatar","Rwanda","Sao Tome and Principe","Saudi Arabia","Senegal","Seychelles","Sierra Leone","Somalia","South Africa","South Sudan","Eswatini","United Republic of Tanzania","Togo","Uganda","United Arab Emirates","Yemen","Zambia","Zimbabwe"],"Precipitation":{"__ndarray__":"bLJGPYS3i0Byp3Sw/vdbQJHQlnPJfJBAMdP2ryyKekAOFeP8jf+HQMgMVMb//JBAxf6ye3KTmUAuxVVl3+1rQO8gdqbwrJVA/PuMC4cmc0Bhw9MrJTebQEw3iUHglpVAeJyiI3msl0CpE9BE2OKVQMvW+iKhz2hAQj7o2Wy3oUBVGFsIcrVqQGyVYHG4N4pAduCcEaWmm0Au51JcFdCKQDZZox5CoJJAuHU3T7VOmkDv5qkOGZmVQBaHM78alIBAmSoYldS5Y0C0AkNW93KMQMX+snvSl6RAVcGopI4dl0BeS8gHPUyRQPIk6ZpJr3FALbKd76fEUkAj2/l+KqaUQP8+48JBJJBAsTOFzmu+aEB+AFKbOAlhQBueXimLMpNAecxAZfy9YUDAlezYCDJZQDhnRGlvApJAQYLix5gYokCM8zehEJFWQJBOXfmsi4NA/mX35OEZmkDdJAaB1bCiQAb1LXO6jGhAnWNA9rq8gUDbp+MxQ/KPQHi5iO8ECo1Aqpog6n7MjUC+h0uO25aRQC6QoPixhJRA8zy4O2tHWED9pNqn43hjQL7e/fHewYxAdXYyOMrshUA=","dtype":"float64","shape":[55]},"Realm":["Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical","Afrotropical"],"Temperature":{"__ndarray__":"fpcqPcAANkAAnO/M8a87QFMQFGTxqDtAF7fRAN62NUA0iygSOZo8QBQ0VQv/pDRADjgjb6anOECYY6GxCWs3QK+f1lkaCTlA+vhckvBmO0Ac9lMI0V85QPrieu+CKzhAodY07zhlOECxtHvNhZA6QAYSFD/GDDxAOVC4Q7CTOECP2YFOG5w6QJytlIqz6zZAkst/SL/lOED2ok5lPv07QJp3nKIjZTtAuZh3wc0POkBGJXUCmnA7QGN/2T150DhA9+/Sco0EOkAm2GhKxUEpQP18gwohkjlAPQrXo3BVNkBphnyriFE2QKAPvgtu5jxA5VYwBX5XPEAgY+5aQqI2QK+J9LasAThASFD8GHNPNEDdwPVNh887QIhY7AqQHztAoqnGJgyVOUBwwxcBKLk7QO2ePCzUrjNA4CIfz0GiN0DWuvxiyV85QBKaTPBgpjxA2OWDeaL2OkCSy39Ivzk6QOy1yFGTFztAAQhHpIBhMUD/Fowlv1A7QNoyCIfxyTNAJQaBlUOzNkBN/v8kKxg7QJEPejar/jZAEUGtjgkqO0BFR3L5D5k3QCsNJANTcDZAruPQRwbGNUA=","dtype":"float64","shape":[55]},"Year":[1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996]},"selected":{"id":"54731","type":"Selection"},"selection_policy":{"id":"54759","type":"UnionRenderers"}},"id":"54730","type":"ColumnDataSource"},{"attributes":{},"id":"55225","type":"BasicTicker"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55510","type":"Scatter"},{"attributes":{"overlay":{"id":"55397","type":"BoxAnnotation"}},"id":"55357","type":"BoxZoomTool"},{"attributes":{"label":{"value":"2016"},"renderers":[{"id":"54752","type":"GlyphRenderer"}]},"id":"54762","type":"LegendItem"},{"attributes":{"source":{"id":"55372","type":"ColumnDataSource"}},"id":"55379","type":"CDSView"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"55522","type":"BoxAnnotation"},{"attributes":{},"id":"55117","type":"BasicTickFormatter"},{"attributes":{},"id":"55143","type":"UnionRenderers"},{"attributes":{},"id":"55356","type":"WheelZoomTool"},{"attributes":{"data_source":{"id":"55005","type":"ColumnDataSource"},"glyph":{"id":"55008","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55010","type":"Scatter"},"nonselection_glyph":{"id":"55009","type":"Scatter"},"selection_glyph":null,"view":{"id":"55012","type":"CDSView"}},"id":"55011","type":"GlyphRenderer"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"55242","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55220","type":"BasicTicker"}},"id":"55219","type":"LinearAxis"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55260","type":"Scatter"},{"attributes":{"text":"Afrotropical","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"54694","type":"Title"},{"attributes":{"axis_label":"Precipitation","bounds":"auto","formatter":{"id":"55367","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55345","type":"BasicTicker"}},"id":"55344","type":"LinearAxis"},{"attributes":{"source":{"id":"54997","type":"ColumnDataSource"}},"id":"55004","type":"CDSView"},{"attributes":{"source":{"id":"55380","type":"ColumnDataSource"}},"id":"55387","type":"CDSView"},{"attributes":{},"id":"54856","type":"WheelZoomTool"},{"attributes":{},"id":"54714","type":"WheelZoomTool"},{"attributes":{"callback":null,"renderers":[{"id":"55503","type":"GlyphRenderer"},{"id":"55511","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"55458","type":"HoverTool"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"54994","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"54975","type":"BasicTicker"}},"id":"54974","type":"LinearAxis"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"55369","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55350","type":"BasicTicker"}},"id":"55349","type":"LinearAxis"},{"attributes":{},"id":"55215","type":"LinearScale"},{"attributes":{"click_policy":"mute","items":[{"id":"54745","type":"LegendItem"},{"id":"54762","type":"LegendItem"}]},"id":"54744","type":"Legend"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55385","type":"Scatter"},{"attributes":{"source":{"id":"54746","type":"ColumnDataSource"}},"id":"54753","type":"CDSView"},{"attributes":{"toolbar":{"id":"55661","type":"ProxyToolbar"},"toolbar_location":"above"},"id":"55662","type":"ToolbarBox"},{"attributes":{"align":null,"below":[{"id":"55219","type":"LinearAxis"}],"center":[{"id":"55223","type":"Grid"},{"id":"55228","type":"Grid"}],"left":[{"id":"55224","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"55253","type":"GlyphRenderer"},{"id":"55261","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"55211","type":"Title"},"toolbar":{"id":"55234","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"55215","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"55217","type":"LinearScale"}},"id":"55210","subtype":"Figure","type":"Plot"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"55147","type":"BoxAnnotation"},{"attributes":{},"id":"55354","type":"SaveTool"},{"attributes":{"overlay":{"id":"54897","type":"BoxAnnotation"}},"id":"54857","type":"BoxZoomTool"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"54743","type":"BoxAnnotation"},{"attributes":{},"id":"54975","type":"BasicTicker"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55509","type":"Scatter"},{"attributes":{"callback":null,"data":{"Country":["Canada","Greenland","United States of America"],"Precipitation":{"__ndarray__":"wFsgQfFVfkC3Yn/ZPd2CQPjCZKrg6IVA","dtype":"float64","shape":[3]},"Realm":["Nearctic","Nearctic","Nearctic"],"Temperature":{"__ndarray__":"0jWTb7YRHMBDEXoRgCIxwHs/nGUp7BpA","dtype":"float64","shape":[3]},"Year":[1996,1996,1996]},"selected":{"id":"55123","type":"Selection"},"selection_policy":{"id":"55143","type":"UnionRenderers"}},"id":"55122","type":"ColumnDataSource"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55259","type":"Scatter"},{"attributes":{"callback":null,"data":{"Country":["Afghanistan","Albania","Algeria","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","China","Croatia","Cyprus","Czechia","Denmark","Egypt","Estonia","Faroe Islands","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Iran (Islamic Republic of)","Iraq","Ireland","Israel","Italy","Japan","Jordan","Kazakhstan","Republic of Korea","Democratic People's Republic of Korea","Kyrgyzstan","Latvia","Lebanon","Libya","Liechtenstein","Lithuania","Luxembourg","North Macedonia","Maldives","Malta","Republic of Moldova","Monaco","Mongolia","Morocco","Netherlands","Norway","Poland","Portugal","Montenegro","Serbia","Romania","Russian Federation","Slovakia","Slovenia","Spain","Sudan","Sweden","Switzerland","Syrian Arab Republic","Tajikistan","Tunisia","Turkey","Turkmenistan","Ukraine","United Kingdom of Great Britain and Northern Ireland","Uzbekistan"],"Precipitation":{"__ndarray__":"DB8RU6IvdUAxCKwc+h6RQGXHRiBeWVBATRWMSurbhEA0gLdAAr+DQDojSntDdpZA097gC5PWfEDSb18HTteFQPaX3ZMHfItANqs+V/tOkUCwA+eMKPeEQHEbDeAtpYRAUMJM2x+qkUCZKhiVVP52QBsN4C2QBodAJXUCmohVhUANiXssfWA5QBHHurgNU4ZA1sVtNADClUDmP6TfvoWDQKpgVFInfolArBxaZHv+kEDo2az63LeFQNbiUwDMMoRAFva0wx+nh0DLoUW2M/iSQGba/pWVQmVAOq+xS1SbaECU9gZf2FORQF3hXS7i7WhAYOXQIlu4i0DOGVHam1mcQI+qJoi6IVRAxLEubqOgdUDCFyZTRQuVQGXHRiB+M5BANGjon+A4gUAjSnuDL06GQOz6BbthKXxA6IcRwqMVNkCwVYLFQb2eQKfoSC5/TYdAMEymCsa/jUAps0EmmWuIQAAAAAAAeqJAXvQVpJkJc0CuR+F6FEOBQEGC4seYBopArhIsDufHcEAdd0oH681xQG3F/rL7BodAImx4emUlkEAu/yH9dh6FQFjnGJC9A41ARuuoaoIilEDFVWXfVYqLQAU0ETa8M4dA4zYawFvZe0AzMzMzM0GMQD7o2ax6vZhAEojX9Quhg0DECOHRRhZwQAYSFD/GgIRAa5p3nALFmUBZTGw+LjhwQAg9m1Uf5IJA1QloImynbkD/snvysDqDQCNKe4MvLGZAQs9m1WcohEDImLuWUBSTQMf0hCWed3BA","dtype":"float64","shape":[72]},"Realm":["Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic"],"Temperature":{"__ndarray__":"kL3e/fEGLUBLWYY41nEpQNQg9EcrEThAPE7RkVziKEBmrjpQuq8fQNjJRzDotx5AnRGlvcEDKUD0iTxJur4fQMauBEFtuSVApr+uFVrzJUDnFqO/qiEoQByxFp8CyB1AmG4Sg8DSJ0BmffKLJUc0QP3vcbf+uCJAh3SPW7kcIkBseHqlLIs3QMjqVs9J/xlAWipvRzidHECEgefew9UIQPudPYa0hydAlvu2gpMCHUBlzkpJ/MMjQE87/DVZAy5AR4jbslavJkCI+BzbWKYJQJdzKa4qozJA+8B9+AzvNkB5QsaSX0wjQJ0Rpb3B/zRAHlA25QpDKkDVPh2PGcAnQNZ5LKITMzRAZzqiIIt/HkCEXf3pGXEoQAoDaLYYuRpAfLm64OZnD0CaTK6E22ccQNOZo6LESTFAf/s6cM5UN0AgQfFjzN0PQGI7Rlf8CR9AlICBMTVkJECoFvpxDmkmQHz9ISIiAj1A4QuTqYIdNECmoshJTkMmQA1Uxr/P2CVArYbEPZZ+5T9+HThnRMUyQDkEd7FDeyVArABKwMIcAkAUeZJ0zbAiQF8dsLy+aS9ABDkoYaZhJEAC0ue0gSYnQI+qJoi6syRApzHzP+bwEMAmF0wNR/4hQBSdfGl3QSRAEraIORuRLEAA9Y4uSWQ8QLnG/F+begdACacFL/qKHEDNHmgFhhgzQNxj6UMXHBNAb4x1lkYJNUCqH4SRcYcoQN52oblOpzBA2VNb+xVtI0BSRIZVvHkiQAB2hS1jcCxA","dtype":"float64","shape":[72]},"Year":[2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016,2016]},"selected":{"id":"55506","type":"Selection"},"selection_policy":{"id":"55520","type":"UnionRenderers"}},"id":"55505","type":"ColumnDataSource"},{"attributes":{"overlay":{"id":"55147","type":"BoxAnnotation"}},"id":"55107","type":"BoxZoomTool"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55252","type":"Scatter"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55502","type":"Scatter"},{"attributes":{},"id":"55494","type":"BasicTickFormatter"},{"attributes":{},"id":"55105","type":"PanTool"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55008","type":"Scatter"},{"attributes":{},"id":"55248","type":"Selection"},{"attributes":{},"id":"55518","type":"UnionRenderers"},{"attributes":{"text":"Australasian","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"54836","type":"Title"},{"attributes":{"data_source":{"id":"55497","type":"ColumnDataSource"},"glyph":{"id":"55500","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55502","type":"Scatter"},"nonselection_glyph":{"id":"55501","type":"Scatter"},"selection_glyph":null,"view":{"id":"55504","type":"CDSView"}},"id":"55503","type":"GlyphRenderer"},{"attributes":{"source":{"id":"55505","type":"ColumnDataSource"}},"id":"55512","type":"CDSView"},{"attributes":{},"id":"54998","type":"Selection"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"55494","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"55475","type":"BasicTicker"}},"id":"55474","type":"LinearAxis"},{"attributes":{},"id":"54712","type":"SaveTool"},{"attributes":{},"id":"55106","type":"WheelZoomTool"},{"attributes":{"data_source":{"id":"55247","type":"ColumnDataSource"},"glyph":{"id":"55250","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55252","type":"Scatter"},"nonselection_glyph":{"id":"55251","type":"Scatter"},"selection_glyph":null,"view":{"id":"55254","type":"CDSView"}},"id":"55253","type":"GlyphRenderer"},{"attributes":{},"id":"55393","type":"UnionRenderers"},{"attributes":{"align":null,"below":[{"id":"54969","type":"LinearAxis"}],"center":[{"id":"54973","type":"Grid"},{"id":"54978","type":"Grid"}],"left":[{"id":"54974","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"55003","type":"GlyphRenderer"},{"id":"55011","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"54961","type":"Title"},"toolbar":{"id":"54984","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"54965","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"54967","type":"LinearScale"}},"id":"54960","subtype":"Figure","type":"Plot"},{"attributes":{},"id":"54967","type":"LinearScale"},{"attributes":{},"id":"54731","type":"Selection"},{"attributes":{"align":null,"below":[{"id":"54844","type":"LinearAxis"}],"center":[{"id":"54848","type":"Grid"},{"id":"54853","type":"Grid"}],"left":[{"id":"54849","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"54878","type":"GlyphRenderer"},{"id":"54886","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"54836","type":"Title"},"toolbar":{"id":"54859","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"54840","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"54842","type":"LinearScale"}},"id":"54835","subtype":"Figure","type":"Plot"},{"attributes":{"data_source":{"id":"55505","type":"ColumnDataSource"},"glyph":{"id":"55508","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55510","type":"Scatter"},"nonselection_glyph":{"id":"55509","type":"Scatter"},"selection_glyph":null,"view":{"id":"55512","type":"CDSView"}},"id":"55511","type":"GlyphRenderer"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54749","type":"Scatter"},{"attributes":{"children":[{"id":"55662","type":"ToolbarBox"},{"id":"55660","type":"GridBox"}]},"id":"55663","type":"Column"},{"attributes":{},"id":"54965","type":"LinearScale"},{"attributes":{"fill_color":{"value":"midnightblue"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55258","type":"Scatter"},{"attributes":{},"id":"54869","type":"BasicTickFormatter"},{"attributes":{},"id":"54992","type":"BasicTickFormatter"},{"attributes":{"callback":null,"data":{"Country":["Bangladesh","Bhutan","Brunei Darussalam","Cambodia","India","Indonesia","Lao People's Democratic Republic","Malaysia","Myanmar","Nepal","Pakistan","Philippines","Singapore","Sri Lanka","Thailand","Timor-Leste","Viet Nam"],"Precipitation":{"__ndarray__":"OgZkrydvoUAMAiuH1oycQFCNl27SF6xAZ/LNNveBnkD7OnDOyDaQQMdLN4kBJadA2ht8YdLvnkCe76fGS/upQIF4Xb9QoKBAsb/snjwuk0D0/dR4aWp1QMHKoUUWBqNAyXa+n9orpUD/CS5WFDKbQMSUSKLXDJtAWP/nMF9WnECAt0CCIumeQA==","dtype":"float64","shape":[17]},"Realm":["Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan","Indomalayan"],"Temperature":{"__ndarray__":"3EYDeAtQOUB/Y7hL9RsoQCUGgZVDdzlA2IzkF0vuOkDjmirzaWw4QNQg9EcrITpASZ2AJsJKN0CTRXIeO4U5QOT9kKMmAzdAVhUx2zvsKEA8vVKWIdwzQGbsc5DqrjlArrZif9mRO0ACvAUSFA87QFLDj1aiKTpAz/dT46V/OUAeIdseqh44QA==","dtype":"float64","shape":[17]},"Year":[1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996]},"selected":{"id":"54998","type":"Selection"},"selection_policy":{"id":"55018","type":"UnionRenderers"}},"id":"54997","type":"ColumnDataSource"},{"attributes":{},"id":"54855","type":"PanTool"},{"attributes":{"data_source":{"id":"55372","type":"ColumnDataSource"},"glyph":{"id":"55375","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55377","type":"Scatter"},"nonselection_glyph":{"id":"55376","type":"Scatter"},"selection_glyph":null,"view":{"id":"55379","type":"CDSView"}},"id":"55378","type":"GlyphRenderer"},{"attributes":{},"id":"55350","type":"BasicTicker"},{"attributes":{},"id":"54893","type":"UnionRenderers"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"54897","type":"BoxAnnotation"},{"attributes":{},"id":"55358","type":"ResetTool"},{"attributes":{"dimension":1,"ticker":{"id":"54975","type":"BasicTicker"}},"id":"54978","type":"Grid"},{"attributes":{"align":null,"below":[{"id":"55094","type":"LinearAxis"}],"center":[{"id":"55098","type":"Grid"},{"id":"55103","type":"Grid"}],"left":[{"id":"55099","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"55128","type":"GlyphRenderer"},{"id":"55136","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"55086","type":"Title"},"toolbar":{"id":"55109","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"55090","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"55092","type":"LinearScale"}},"id":"55085","subtype":"Figure","type":"Plot"},{"attributes":{},"id":"55108","type":"ResetTool"},{"attributes":{},"id":"54759","type":"UnionRenderers"},{"attributes":{},"id":"55340","type":"LinearScale"},{"attributes":{"text":"Oceanian","text_color":{"value":"black"},"text_font_size":{"value":"12pt"}},"id":"55336","type":"Title"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55135","type":"Scatter"},{"attributes":{"source":{"id":"55247","type":"ColumnDataSource"}},"id":"55254","type":"CDSView"},{"attributes":{"ticker":{"id":"55095","type":"BasicTicker"}},"id":"55098","type":"Grid"},{"attributes":{"fill_alpha":{"value":0.2},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.2},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54735","type":"Scatter"},{"attributes":{"label":{"value":"1996"},"renderers":[{"id":"54736","type":"GlyphRenderer"}]},"id":"54745","type":"LegendItem"},{"attributes":{"source":{"id":"54880","type":"ColumnDataSource"}},"id":"54887","type":"CDSView"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"54833","type":"HoverTool"},{"id":"54854","type":"SaveTool"},{"id":"54855","type":"PanTool"},{"id":"54856","type":"WheelZoomTool"},{"id":"54857","type":"BoxZoomTool"},{"id":"54858","type":"ResetTool"}]},"id":"54859","type":"Toolbar"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55376","type":"Scatter"},{"attributes":{},"id":"55369","type":"BasicTickFormatter"},{"attributes":{},"id":"55470","type":"BasicTicker"},{"attributes":{"tools":[{"id":"54691","type":"HoverTool"},{"id":"54712","type":"SaveTool"},{"id":"54713","type":"PanTool"},{"id":"54714","type":"WheelZoomTool"},{"id":"54715","type":"BoxZoomTool"},{"id":"54716","type":"ResetTool"},{"id":"54833","type":"HoverTool"},{"id":"54854","type":"SaveTool"},{"id":"54855","type":"PanTool"},{"id":"54856","type":"WheelZoomTool"},{"id":"54857","type":"BoxZoomTool"},{"id":"54858","type":"ResetTool"},{"id":"54958","type":"HoverTool"},{"id":"54979","type":"SaveTool"},{"id":"54980","type":"PanTool"},{"id":"54981","type":"WheelZoomTool"},{"id":"54982","type":"BoxZoomTool"},{"id":"54983","type":"ResetTool"},{"id":"55083","type":"HoverTool"},{"id":"55104","type":"SaveTool"},{"id":"55105","type":"PanTool"},{"id":"55106","type":"WheelZoomTool"},{"id":"55107","type":"BoxZoomTool"},{"id":"55108","type":"ResetTool"},{"id":"55208","type":"HoverTool"},{"id":"55229","type":"SaveTool"},{"id":"55230","type":"PanTool"},{"id":"55231","type":"WheelZoomTool"},{"id":"55232","type":"BoxZoomTool"},{"id":"55233","type":"ResetTool"},{"id":"55333","type":"HoverTool"},{"id":"55354","type":"SaveTool"},{"id":"55355","type":"PanTool"},{"id":"55356","type":"WheelZoomTool"},{"id":"55357","type":"BoxZoomTool"},{"id":"55358","type":"ResetTool"},{"id":"55458","type":"HoverTool"},{"id":"55479","type":"SaveTool"},{"id":"55480","type":"PanTool"},{"id":"55481","type":"WheelZoomTool"},{"id":"55482","type":"BoxZoomTool"},{"id":"55483","type":"ResetTool"}]},"id":"55661","type":"ProxyToolbar"},{"attributes":{"callback":null,"renderers":[{"id":"54736","type":"GlyphRenderer"},{"id":"54752","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"54691","type":"HoverTool"},{"attributes":{"ticker":{"id":"55345","type":"BasicTicker"}},"id":"55348","type":"Grid"},{"attributes":{},"id":"54994","type":"BasicTickFormatter"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55251","type":"Scatter"},{"attributes":{"align":null,"below":[{"id":"55344","type":"LinearAxis"}],"center":[{"id":"55348","type":"Grid"},{"id":"55353","type":"Grid"}],"left":[{"id":"55349","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"55378","type":"GlyphRenderer"},{"id":"55386","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"55336","type":"Title"},"toolbar":{"id":"55359","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"55340","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"55342","type":"LinearScale"}},"id":"55335","subtype":"Figure","type":"Plot"},{"attributes":{"align":null,"below":[{"id":"55469","type":"LinearAxis"}],"center":[{"id":"55473","type":"Grid"},{"id":"55478","type":"Grid"}],"left":[{"id":"55474","type":"LinearAxis"}],"margin":null,"min_border_bottom":10,"min_border_left":10,"min_border_right":10,"min_border_top":10,"plot_height":300,"plot_width":400,"renderers":[{"id":"55503","type":"GlyphRenderer"},{"id":"55511","type":"GlyphRenderer"}],"sizing_mode":"fixed","title":{"id":"55461","type":"Title"},"toolbar":{"id":"55484","type":"Toolbar"},"toolbar_location":null,"x_range":{"id":"54689","type":"Range1d"},"x_scale":{"id":"55465","type":"LinearScale"},"y_range":{"id":"54690","type":"Range1d"},"y_scale":{"id":"55467","type":"LinearScale"}},"id":"55460","subtype":"Figure","type":"Plot"},{"attributes":{},"id":"55217","type":"LinearScale"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"55397","type":"BoxAnnotation"},{"attributes":{"data_source":{"id":"55255","type":"ColumnDataSource"},"glyph":{"id":"55258","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55260","type":"Scatter"},"nonselection_glyph":{"id":"55259","type":"Scatter"},"selection_glyph":null,"view":{"id":"55262","type":"CDSView"}},"id":"55261","type":"GlyphRenderer"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54733","type":"Scatter"},{"attributes":{},"id":"54713","type":"PanTool"},{"attributes":{},"id":"55355","type":"PanTool"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"midnightblue"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54884","type":"Scatter"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55501","type":"Scatter"},{"attributes":{"overlay":{"id":"54743","type":"BoxAnnotation"}},"id":"54715","type":"BoxZoomTool"},{"attributes":{"axis_label":"Temperature","bounds":"auto","formatter":{"id":"54727","type":"BasicTickFormatter"},"major_label_orientation":"horizontal","ticker":{"id":"54708","type":"BasicTicker"}},"id":"54707","type":"LinearAxis"},{"attributes":{"dimension":1,"ticker":{"id":"54708","type":"BasicTicker"}},"id":"54711","type":"Grid"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55250","type":"Scatter"},{"attributes":{},"id":"54854","type":"SaveTool"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"55208","type":"HoverTool"},{"id":"55229","type":"SaveTool"},{"id":"55230","type":"PanTool"},{"id":"55231","type":"WheelZoomTool"},{"id":"55232","type":"BoxZoomTool"},{"id":"55233","type":"ResetTool"}]},"id":"55234","type":"Toolbar"},{"attributes":{},"id":"54716","type":"ResetTool"},{"attributes":{"data_source":{"id":"55130","type":"ColumnDataSource"},"glyph":{"id":"55133","type":"Scatter"},"hover_glyph":null,"muted_glyph":{"id":"55135","type":"Scatter"},"nonselection_glyph":{"id":"55134","type":"Scatter"},"selection_glyph":null,"view":{"id":"55137","type":"CDSView"}},"id":"55136","type":"GlyphRenderer"},{"attributes":{"dimension":1,"ticker":{"id":"55350","type":"BasicTicker"}},"id":"55353","type":"Grid"},{"attributes":{},"id":"55520","type":"UnionRenderers"},{"attributes":{"overlay":{"id":"55272","type":"BoxAnnotation"}},"id":"55232","type":"BoxZoomTool"},{"attributes":{},"id":"55090","type":"LinearScale"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"54734","type":"Scatter"},{"attributes":{"source":{"id":"55005","type":"ColumnDataSource"}},"id":"55012","type":"CDSView"},{"attributes":{"callback":null,"data":{"Country":["Australia","New Caledonia","New Zealand","Papua New Guinea","Solomon Islands","Vanuatu"],"Precipitation":{"__ndarray__":"I9v5fmptf0DyBwPPvZuVQHsUrkdh3JlAmpmZmdlqqECHFtnO97GnQM/3U+MlEaZA","dtype":"float64","shape":[6]},"Realm":["Australasian","Australasian","Australasian","Australasian","Australasian","Australasian"],"Temperature":{"__ndarray__":"+ZX24TNcNkDQ4Me95uI2QJGxw6npcSVA9GHlq/eyOUCuR+F6FLI5QKMuKs4+iDhA","dtype":"float64","shape":[6]},"Year":[2016,2016,2016,2016,2016,2016]},"selected":{"id":"54881","type":"Selection"},"selection_policy":{"id":"54895","type":"UnionRenderers"}},"id":"54880","type":"ColumnDataSource"},{"attributes":{"fill_alpha":{"value":0.1},"fill_color":{"value":"khaki"},"line_alpha":{"value":0.1},"line_color":{"value":"black"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55126","type":"Scatter"},{"attributes":{"callback":null,"data":{"Country":["Afghanistan","Albania","Algeria","Andorra","Armenia","Austria","Azerbaijan","Belarus","Belgium","Bosnia and Herzegovina","Bulgaria","China","Croatia","Cyprus","Czechia","Denmark","Egypt","Estonia","Faroe Islands","Finland","France","Georgia","Germany","Greece","Hungary","Iceland","Iran (Islamic Republic of)","Iraq","Ireland","Israel","Italy","Japan","Jordan","Kazakhstan","Republic of Korea","Democratic People's Republic of Korea","Kyrgyzstan","Latvia","Lebanon","Libya","Liechtenstein","Lithuania","Luxembourg","North Macedonia","Maldives","Malta","Republic of Moldova","Monaco","Mongolia","Morocco","Netherlands","Norway","Poland","Portugal","Montenegro","Serbia","Romania","Russian Federation","Slovakia","Slovenia","Spain","Sudan","Sweden","Switzerland","Syrian Arab Republic","Tajikistan","Tunisia","Turkey","Turkmenistan","Ukraine","United Kingdom of Great Britain and Northern Ireland","Uzbekistan"],"Precipitation":{"__ndarray__":"W7bWFwkQdEDRkVz+g/WRQCR/MPDce1lAT6+UZQgBkUCrlQm/VER8QAK8BRKUa5NAOwFNhA0+eEDBOSNK+9+BQLQCQ1Y334NA0NVW7O83k0DLEMe6uLWCQI7MI38wUoJARIts53vIkkCnP/uRokt9QMWPMXetSIVARWRYxRvvf0A2k2+2uek1QD9XW7E/5oFA/Yf025dNmED/If32dUKAQNDVVuyvg4pAb/CFydTmikBljXqIRuiCQFExzt8E/IVAQYLix5hmhECDwMqhxXqOQITTghd9+nBATUpBt5dSbUAbL90kRpyRQAn+t5IdLWxAMEymCoa2kUASg8DKYWuVQBhDOdGuYFlAVdl3RfDSakA7cM6IEs2SQO6x9KFLMJBAIJijx29Gd0COdXEbDayBQOFdLuL7yYBAu7iNBvCqRkDFILByqHWbQJT2Bl8YwYBADeAtkCC9hUAnMQisnOuEQAAAAAAAeqJAPDHrxdAlgUCTOgFNBMGCQJayDHHsZ5NA0sYRa/GFakDzjlN0JEyAQMtneR4cFIJAQs9m1ecAjED7XG3F/k2BQATnjCjN+pFARiV1AhoulUAp7Q2+sJCJQDEIrBxawYRAxty1hHweekCWIY518eKIQKVOQBOhLZdAqmBUUqfbiECdhT3t8BhqQFFrmnecYYJApU5AE2GBl0BuUWaDzH12QGnGounsXX5AqWqCqPvqckBNFYxK6vGCQNuF5jqNqFlArthfds/kgUDmP6TfPvyPQDLmriXkO2FA","dtype":"float64","shape":[72]},"Realm":["Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic","Palearctic"],"Temperature":{"__ndarray__":"3IDPDyOAKUA9aI0wMlImQPYoXI/CGTdAMu2yToLYJkAZZc/AtagfQHam0HmN5RZACFVq9kCHKED7kSIyrDIXQOtnmsHywiFAA1slWBx2IkCJnxZykmskQN/RLRnaqxlAMEymCkZFJECNot/jOTAzQPu95neH6RpABLeH3zpUG0DgLZCg+NU2QOUn1T4d5xJAFN8iUsBrGUCGOoIVlE/4P93SakjcLyVAPK9KROV8G0C5quy7IvgdQNNjRLPF/CpA7j1cctzdIkAdsEB3b+IBQDGHtR1AOjFAEz6DYdORNkDalhi6/xkiQBNWUgJ1OTRA39kHaguGJ0Ds7upmWSYlQCibcoV3bzNAfU09sPbKFEBIy5hxQNAlQF53jE0YwhZALxpcedzq/T9UJzmCQW8UQMDy+OJ4ZTBAcRsN4C2ANkBE3QcgtXkDQCKJXkaxZBZAkoqvhwl9IEBWn6ut2BMjQJqZmZmZ+TtA0vVsMVL+MkBZ1uYQS/0hQEeW4wSTfCNAB23C0V/VxL/HVqha+MsxQIEapzKfwiBA9Q/OYgM84z/nZXvSnL8aQFa8kXnkKy5Am8Izsj70IECr/Yaa+54jQLj/sSES/CBAEfKo1tVfF8BSAPNuPyMbQK7TSEvlwSBA7rH0oQv2KkDW0N4FN487QGCTNeohWvY/a7ddaK4jFkDa/pWVJoUyQJBPMyHAvAdAJJf/kH7DM0DFpRMamxgnQLMdPCSPTi5Af/YjRWSIHkBg+7LFSIEgQACpTZzc/ydA","dtype":"float64","shape":[72]},"Year":[1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996,1996]},"selected":{"id":"55498","type":"Selection"},"selection_policy":{"id":"55518","type":"UnionRenderers"}},"id":"55497","type":"ColumnDataSource"},{"attributes":{"callback":null,"renderers":[{"id":"55003","type":"GlyphRenderer"},{"id":"55011","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"54958","type":"HoverTool"},{"attributes":{"bottom_units":"screen","fill_alpha":{"value":0.5},"fill_color":{"value":"lightgrey"},"left_units":"screen","level":"overlay","line_alpha":{"value":1.0},"line_color":{"value":"black"},"line_dash":[4,4],"line_width":{"value":2},"render_mode":"css","right_units":"screen","top_units":"screen"},"id":"55272","type":"BoxAnnotation"},{"attributes":{},"id":"54727","type":"BasicTickFormatter"},{"attributes":{},"id":"55345","type":"BasicTicker"},{"attributes":{"active_drag":"auto","active_inspect":"auto","active_multi":null,"active_scroll":"auto","active_tap":"auto","tools":[{"id":"55333","type":"HoverTool"},{"id":"55354","type":"SaveTool"},{"id":"55355","type":"PanTool"},{"id":"55356","type":"WheelZoomTool"},{"id":"55357","type":"BoxZoomTool"},{"id":"55358","type":"ResetTool"}]},"id":"55359","type":"Toolbar"},{"attributes":{"fill_color":{"value":"khaki"},"size":{"units":"screen","value":6},"x":{"field":"Precipitation"},"y":{"field":"Temperature"}},"id":"55000","type":"Scatter"},{"attributes":{},"id":"55145","type":"UnionRenderers"},{"attributes":{"callback":null,"renderers":[{"id":"55378","type":"GlyphRenderer"},{"id":"55386","type":"GlyphRenderer"}],"tooltips":[["Country","@Country"],["Year","@Year"]]},"id":"55333","type":"HoverTool"},{"attributes":{},"id":"55230","type":"PanTool"}],"root_ids":["55665"]},"title":"Bokeh Application","version":"1.3.4"}};
+  var render_items = [{"docid":"300f2294-ae52-4c6b-b4ee-508cd5227f92","roots":{"55665":"00d2cf42-0cb5-40fc-b87f-9f047255b0b2"}}];
+  root.Bokeh.embed.embed_items_notebook(docs_json, render_items);
+
+  }
+  if (root.Bokeh !== undefined) {
+    embed_document(root);
+  } else {
+    var attempts = 0;
+    var timer = setInterval(function(root) {
+      if (root.Bokeh !== undefined) {
+        embed_document(root);
+        clearInterval(timer);
+      }
+      attempts++;
+      if (attempts > 100) {
+        console.log("Bokeh: ERROR: Unable to run BokehJS code because BokehJS library is missing");
+        clearInterval(timer);
+      }
+    }, 10, root)
+  }
+})(window);
+</script>
+</div>
